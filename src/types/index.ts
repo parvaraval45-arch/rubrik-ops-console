@@ -738,3 +738,93 @@ export interface AttestationReport {
   tenantCount: number;
   distributionList: string[];
 }
+
+// ── Capacity & Billing ───────────────────────────────────────────────────────
+
+export type BillingStatus = "Draft" | "Approved" | "Invoiced" | "Paid" | "Disputed";
+
+export type BillingPeriodStatus = "open" | "locked" | "invoiced" | "paid";
+
+export interface BillingAdjustment {
+  id: string;
+  description: string;
+  amount: number; // negative for credits
+  reason: string;
+  appliedBy: string;
+  appliedAt: string;
+}
+
+export interface BillingDispute {
+  id: string;
+  filedAt: string;
+  filedBy: string;
+  contactEmail: string;
+  status: "Awaiting Review" | "Acknowledged" | "Under Review" | "Resolved (Adjusted)" | "Resolved (Denied)" | "Escalated";
+  disputedAmount: number;
+  reason: string;
+  estimatedResolutionAt?: string;
+  activity: Array<{
+    at: string;
+    by: string;
+    note: string;
+  }>;
+  evidence: Array<{ id: string; description: string }>;
+}
+
+export interface BillingLineItem {
+  id: string;
+  tenantId: string;
+  tenantName: string;
+  industry: Industry;
+  tier: Tier;
+  resellerId?: string;
+  committedTB: number;
+  usedTB: number;
+  overageTB: number;
+  utilizationPct: number;
+  ratePerTB: number;
+  baseCharge: number;
+  overageCharge: number;
+  adjustments: BillingAdjustment[];
+  resellerCommissionPct?: number;
+  totalCharge: number;
+  status: BillingStatus;
+  invoiceId?: string;
+  invoicedAt?: string;
+  paidAt?: string;
+  dispute?: BillingDispute;
+  workloadBreakdown: Array<{ type: WorkloadType; consumedTB: number }>;
+  storageTierBreakdown: Array<{ tier: "Performance" | "Capacity" | "Archive"; consumedTB: number }>;
+  metrics: {
+    totalRestorePoints: number;
+    transferOutTB: number;
+    backupJobsExecuted: number;
+  };
+  taxNote: string;
+}
+
+export interface BillingPeriod {
+  periodStart: string;
+  periodEnd: string;
+  label: string;
+  status: BillingPeriodStatus;
+  lockedAt?: string;
+  invoicedAt?: string;
+  paidAt?: string;
+  reconciledAt: string;
+}
+
+export interface QuotaEnforcementRow {
+  id: string;
+  tenantId: string;
+  tenantName: string;
+  quotaType: "Storage" | "Workload Count" | "Transfer-Out" | "Restore Points";
+  currentUsage: string;
+  softLimit: string;
+  hardLimit: string;
+  hardLimitBehavior: "Block" | "Notify" | "Auto-Upgrade";
+  status: "Approaching Soft" | "Soft Breach" | "Approaching Hard" | "Hard Breach";
+  detail: string;
+}
+
+export type ExportFormat = "csv" | "json" | "connectwise" | "autotask";

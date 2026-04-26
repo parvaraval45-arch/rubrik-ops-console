@@ -10,6 +10,11 @@ import type {
   Alert,
   AttestationReport,
   AuditEvent,
+  BillingAdjustment,
+  BillingDispute,
+  BillingLineItem,
+  BillingPeriod,
+  BillingStatus,
   CompletedOnboarding,
   ComplianceFrameworkPosture,
   DetailedAuditEvent,
@@ -28,6 +33,7 @@ import type {
   PolicyAssignment,
   PolicyOverride,
   PolicyVersion,
+  QuotaEnforcementRow,
   QuotaUsage,
   RbacRoleSummary,
   RestorePoint,
@@ -110,6 +116,10 @@ interface ConsoleState extends PerTenantState {
   securitySchedule: SecurityScheduleEntry[];
   securityBanner: SecurityBannerState;
   attestationReports: AttestationReport[];
+  billingLineItems: BillingLineItem[];
+  billingPeriod: BillingPeriod;
+  quotaEnforcement: QuotaEnforcementRow[];
+  billingHistory: Record<string, Array<{ month: string; total: number }>>;
   sidebarCollapsed: boolean;
   commandPaletteOpen: boolean;
   density: "comfortable" | "compact";
@@ -219,6 +229,44 @@ interface ConsoleState extends PerTenantState {
     frequencyHours: number,
   ) => void;
 
+  // ── Capacity & Billing ───────────────────────────────────────────────────
+  approveLineItems: (lineItemIds: string[], operatorName: string, note: string) => void;
+  flagDispute: (
+    lineItemId: string,
+    operatorName: string,
+    payload: {
+      contactName: string;
+      disputedAmount: number;
+      reason: string;
+      estimatedResolutionAt?: string;
+    },
+  ) => void;
+  appendDisputeComment: (lineItemId: string, operatorName: string, note: string) => void;
+  updateDisputeStatus: (
+    lineItemId: string,
+    operatorName: string,
+    nextStatus: BillingDispute["status"],
+    note: string,
+  ) => void;
+  applyDisputeCredit: (
+    lineItemId: string,
+    operatorName: string,
+    amount: number,
+    reason: string,
+  ) => void;
+  addLineItemAdjustment: (
+    lineItemId: string,
+    operatorName: string,
+    adjustment: Omit<BillingAdjustment, "id" | "appliedAt">,
+  ) => void;
+  generateInvoices: (operatorName: string, note: string) => string[];
+  lockBillingPeriod: (operatorName: string) => void;
+  recordBillingExport: (
+    operatorName: string,
+    format: "csv" | "json" | "connectwise" | "autotask",
+    filename: string,
+  ) => void;
+
   // ── Onboarding lifecycle ──────────────────────────────────────────────────
   createDraft: (operatorName: string) => string;
   upsertDraft: (draft: OnboardingDraft) => void;
@@ -259,6 +307,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
   securitySchedule: mockData.securitySchedule,
   securityBanner: { acknowledged: false } as SecurityBannerState,
   attestationReports: [] as AttestationReport[],
+  billingLineItems: mockData.billingLineItems,
+  billingPeriod: mockData.billingPeriod,
+  quotaEnforcement: mockData.quotaEnforcement,
+  billingHistory: mockData.billingHistory,
   sidebarCollapsed: false,
   commandPaletteOpen: false,
   density: "comfortable",
@@ -1329,5 +1381,227 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             }
           : entry,
       ),
+    })),
+
+  // ── Capacity & Billing workflows ──────────────────────────────────────────
+  approveLineItems: (lineItemIds, operatorName, note) =>
+    set((s) => {
+      const setIds = new Set(lineItemIds);
+      const events: AuditEvent[] = [];
+      const updated = s.billingLineItems.map((li) => {
+        if (!setIds.has(li.id) || li.status !== "Draft") return li;
+        events.push({
+          id: makeAuditId("audit"),
+          actor: operatorName,
+          actorRole: "MSP Admin",
+          action: "billing.approve",
+          target: li.tenantName,
+          tenantId: li.tenantId,
+          outcome: "success",
+          occurredAt: new Date().toISOString(),
+          ipAddress: "10.0.4.127",
+        });
+        return { ...li, status: "Approved" as BillingStatus };
+      });
+      void note;
+      return {
+        billingLineItems: updated,
+        auditEvents: [...events, ...s.auditEvents],
+      };
+    }),
+
+  flagDispute: (lineItemId, operatorName, payload) =>
+    set((s) => {
+      const li = s.billingLineItems.find((x) => x.id === lineItemId);
+      if (!li) return {};
+      const disputeNumber = String(s.billingLineItems.filter((x) => x.dispute).length + 7).padStart(3, "0");
+      const now = new Date().toISOString();
+      const dispute: BillingDispute = {
+        id: `DISPUTE-2026-04-${disputeNumber}`,
+        filedAt: now,
+        filedBy: payload.contactName,
+        contactEmail: `${payload.contactName.toLowerCase().replace(/\s+/g, ".")}@${li.tenantName.toLowerCase().split(/\s+/).slice(0, 2).join("")}.com`,
+        status: "Awaiting Review",
+        disputedAmount: payload.disputedAmount,
+        reason: payload.reason,
+        estimatedResolutionAt: payload.estimatedResolutionAt,
+        activity: [
+          { at: now, by: operatorName, note: `Dispute filed for ${li.tenantName}.` },
+        ],
+        evidence: [],
+      };
+      const event: AuditEvent = {
+        id: makeAuditId("audit"),
+        actor: operatorName,
+        actorRole: "MSP Admin",
+        action: "billing.dispute.flag",
+        target: li.tenantName,
+        tenantId: li.tenantId,
+        outcome: "success",
+        occurredAt: now,
+        ipAddress: "10.0.4.127",
+      };
+      return {
+        billingLineItems: s.billingLineItems.map((x) =>
+          x.id === lineItemId
+            ? { ...x, status: "Disputed" as BillingStatus, dispute }
+            : x,
+        ),
+        auditEvents: [event, ...s.auditEvents],
+      };
+    }),
+
+  appendDisputeComment: (lineItemId, operatorName, note) =>
+    set((s) => ({
+      billingLineItems: s.billingLineItems.map((x) => {
+        if (x.id !== lineItemId || !x.dispute) return x;
+        return {
+          ...x,
+          dispute: {
+            ...x.dispute,
+            activity: [
+              ...x.dispute.activity,
+              { at: new Date().toISOString(), by: operatorName, note },
+            ],
+          },
+        };
+      }),
+    })),
+
+  updateDisputeStatus: (lineItemId, operatorName, nextStatus, note) =>
+    set((s) => ({
+      billingLineItems: s.billingLineItems.map((x) => {
+        if (x.id !== lineItemId || !x.dispute) return x;
+        const resolved = nextStatus === "Resolved (Adjusted)" || nextStatus === "Resolved (Denied)";
+        return {
+          ...x,
+          status: resolved ? ("Approved" as BillingStatus) : x.status,
+          dispute: {
+            ...x.dispute,
+            status: nextStatus,
+            activity: [
+              ...x.dispute.activity,
+              { at: new Date().toISOString(), by: operatorName, note },
+            ],
+          },
+        };
+      }),
+    })),
+
+  applyDisputeCredit: (lineItemId, operatorName, amount, reason) =>
+    set((s) => {
+      const now = new Date().toISOString();
+      return {
+        billingLineItems: s.billingLineItems.map((x) => {
+          if (x.id !== lineItemId) return x;
+          const adj: BillingAdjustment = {
+            id: `adj_${Math.random().toString(36).slice(2, 10)}`,
+            description: "Dispute credit",
+            amount: -Math.abs(amount),
+            reason,
+            appliedBy: operatorName,
+            appliedAt: now,
+          };
+          return {
+            ...x,
+            adjustments: [...x.adjustments, adj],
+            totalCharge: Math.max(0, x.totalCharge - Math.abs(amount)),
+          };
+        }),
+      };
+    }),
+
+  addLineItemAdjustment: (lineItemId, operatorName, adjustment) =>
+    set((s) => ({
+      billingLineItems: s.billingLineItems.map((x) => {
+        if (x.id !== lineItemId) return x;
+        const adj: BillingAdjustment = {
+          ...adjustment,
+          id: `adj_${Math.random().toString(36).slice(2, 10)}`,
+          appliedAt: new Date().toISOString(),
+          appliedBy: operatorName,
+        };
+        return {
+          ...x,
+          adjustments: [...x.adjustments, adj],
+          totalCharge: x.totalCharge + adjustment.amount,
+        };
+      }),
+    })),
+
+  generateInvoices: (operatorName, note) => {
+    const ids: string[] = [];
+    set((s) => {
+      const events: AuditEvent[] = [];
+      let counter = 1;
+      const updated = s.billingLineItems.map((li) => {
+        if (li.status !== "Approved") return li;
+        const invoiceId = `INV-2026-04-${String(counter).padStart(3, "0")}`;
+        counter += 1;
+        ids.push(invoiceId);
+        events.push({
+          id: makeAuditId("audit"),
+          actor: operatorName,
+          actorRole: "MSP Admin",
+          action: "billing.invoice.generate",
+          target: invoiceId,
+          tenantId: li.tenantId,
+          outcome: "success",
+          occurredAt: new Date().toISOString(),
+          ipAddress: "10.0.4.127",
+        });
+        return {
+          ...li,
+          status: "Invoiced" as BillingStatus,
+          invoiceId,
+          invoicedAt: new Date().toISOString(),
+        };
+      });
+      void note;
+      return {
+        billingLineItems: updated,
+        auditEvents: [...events, ...s.auditEvents],
+      };
+    });
+    return ids;
+  },
+
+  lockBillingPeriod: (operatorName) =>
+    set((s) => {
+      const event: AuditEvent = {
+        id: makeAuditId("audit"),
+        actor: operatorName,
+        actorRole: "MSP Admin",
+        action: "billing.period.lock",
+        target: s.billingPeriod.label,
+        outcome: "success",
+        occurredAt: new Date().toISOString(),
+        ipAddress: "10.0.4.127",
+      };
+      return {
+        billingPeriod: {
+          ...s.billingPeriod,
+          status: "locked",
+          lockedAt: new Date().toISOString(),
+        },
+        auditEvents: [event, ...s.auditEvents],
+      };
+    }),
+
+  recordBillingExport: (operatorName, format, filename) =>
+    set((s) => ({
+      auditEvents: [
+        {
+          id: makeAuditId("audit"),
+          actor: operatorName,
+          actorRole: "MSP Admin",
+          action: `billing.export.${format}`,
+          target: filename,
+          outcome: "success",
+          occurredAt: new Date().toISOString(),
+          ipAddress: "10.0.4.127",
+        },
+        ...s.auditEvents,
+      ],
     })),
 }));

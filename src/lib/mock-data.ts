@@ -8,6 +8,9 @@ import type {
   AlertSeverity,
   AuditEvent,
   BackupJob,
+  BillingDispute,
+  BillingLineItem,
+  BillingPeriod,
   Cluster,
   CompletedOnboarding,
   ComplianceFrameworkPosture,
@@ -40,6 +43,7 @@ import type {
   PolicyKind,
   PolicyOverride,
   PolicyVersion,
+  QuotaEnforcementRow,
   QuotaUsage,
   RbacRoleSummary,
   Region,
@@ -2020,6 +2024,259 @@ const securitySchedule: SecurityScheduleEntry[] = [
   { controlId: "full-sweep", label: "Full Sweep", frequencyHours: 24, lastRunAt: new Date(SECURITY_NOW - 4 * 60 * 60_000).toISOString(), nextRunAt: new Date(SECURITY_NOW + 18 * 60 * 60_000).toISOString() },
 ];
 
+// ── Billing & capacity ───────────────────────────────────────────────────────
+
+interface SeedBillingRow {
+  name: string;
+  industry: Industry;
+  tier: Tier;
+  committedTB: number;
+  usedTB: number;
+  overageTB: number;
+  utilizationPct: number;
+  ratePerTB: number;
+  totalCharge: number;
+  status: "Draft" | "Approved" | "Invoiced" | "Paid" | "Disputed";
+}
+
+const SEED_BILLING_ROWS: SeedBillingRow[] = [
+  { name: "Harborview Medical Group", industry: "Aerospace", tier: "Gold", committedTB: 78, usedTB: 67, overageTB: 0, utilizationPct: 86, ratePerTB: 85, totalCharge: 5_695, status: "Draft" },
+  { name: "Bridgewater Analytics", industry: "Education", tier: "Gold", committedTB: 71, usedTB: 68, overageTB: 0, utilizationPct: 96, ratePerTB: 85, totalCharge: 5_780, status: "Approved" },
+  { name: "Ironclad Security Solutions", industry: "Retail", tier: "Gold", committedTB: 77, usedTB: 62, overageTB: 0, utilizationPct: 80, ratePerTB: 65, totalCharge: 4_030, status: "Approved" },
+  { name: "Cascade Energy Partners", industry: "Hospitality", tier: "Gold", committedTB: 53, usedTB: 47, overageTB: 0, utilizationPct: 89, ratePerTB: 85, totalCharge: 3_995, status: "Draft" },
+  { name: "Commonwealth Legal Services", industry: "Retail", tier: "Silver", committedTB: 46, usedTB: 58, overageTB: 12, utilizationPct: 126, ratePerTB: 65, totalCharge: 4_550, status: "Disputed" },
+  { name: "Meridian Pharmaceuticals", industry: "Hospitality", tier: "Silver", committedTB: 69, usedTB: 39, overageTB: 0, utilizationPct: 57, ratePerTB: 50, totalCharge: 1_950, status: "Invoiced" },
+  { name: "Lakewood Community Health", industry: "Education", tier: "Silver", committedTB: 59, usedTB: 65, overageTB: 6, utilizationPct: 110, ratePerTB: 50, totalCharge: 3_550, status: "Paid" },
+  { name: "Vanguard Defense Systems", industry: "Telecommunications", tier: "Silver", committedTB: 69, usedTB: 44, overageTB: 0, utilizationPct: 64, ratePerTB: 45, totalCharge: 1_980, status: "Invoiced" },
+  { name: "Sterling Aerospace", industry: "Legal", tier: "Bronze", committedTB: 67, usedTB: 67, overageTB: 0, utilizationPct: 100, ratePerTB: 45, totalCharge: 3_015, status: "Draft" },
+  { name: "Mercy General Hospital", industry: "Logistics", tier: "Silver", committedTB: 45, usedTB: 32, overageTB: 0, utilizationPct: 71, ratePerTB: 50, totalCharge: 1_600, status: "Paid" },
+  { name: "Nexus Biotech Labs", industry: "Logistics", tier: "Bronze", committedTB: 75, usedTB: 37, overageTB: 0, utilizationPct: 49, ratePerTB: 30, totalCharge: 1_110, status: "Paid" },
+  { name: "Pinnacle Insurance Group", industry: "Technology", tier: "Gold", committedTB: 41, usedTB: 37, overageTB: 0, utilizationPct: 90, ratePerTB: 65, totalCharge: 2_405, status: "Approved" },
+  { name: "Atlas Logistics Corp", industry: "Manufacturing", tier: "Silver", committedTB: 30, usedTB: 27, overageTB: 0, utilizationPct: 90, ratePerTB: 50, totalCharge: 1_350, status: "Approved" },
+  { name: "Northbridge Capital", industry: "Education", tier: "Platinum", committedTB: 50, usedTB: 48, overageTB: 0, utilizationPct: 96, ratePerTB: 85, totalCharge: 4_080, status: "Approved" },
+  { name: "Crawford & Associates LLP", industry: "Legal", tier: "Gold", committedTB: 22, usedTB: 19, overageTB: 0, utilizationPct: 86, ratePerTB: 85, totalCharge: 1_615, status: "Approved" },
+  { name: "Hawthorne Manufacturing", industry: "Technology", tier: "Silver", committedTB: 80, usedTB: 39, overageTB: 0, utilizationPct: 49, ratePerTB: 50, totalCharge: 1_950, status: "Approved" },
+  { name: "Summit Financial Group", industry: "Technology", tier: "Gold", committedTB: 70, usedTB: 23, overageTB: 0, utilizationPct: 33, ratePerTB: 85, totalCharge: 1_955, status: "Draft" },
+  { name: "Sapphire Hotels International", industry: "Hospitality", tier: "Bronze", committedTB: 65, usedTB: 22, overageTB: 0, utilizationPct: 34, ratePerTB: 30, totalCharge: 660, status: "Invoiced" },
+  { name: "Quantum Data Sciences", industry: "Technology", tier: "Platinum", committedTB: 22, usedTB: 12, overageTB: 0, utilizationPct: 55, ratePerTB: 85, totalCharge: 1_020, status: "Invoiced" },
+  { name: "CrossPoint Engineering", industry: "Hospitality", tier: "Bronze", committedTB: 35, usedTB: 12, overageTB: 0, utilizationPct: 34, ratePerTB: 30, totalCharge: 360, status: "Paid" },
+];
+
+const WORKLOAD_BREAKDOWN_PRESETS: Array<Array<{ type: WorkloadType; pct: number }>> = [
+  [
+    { type: "VM", pct: 0.55 },
+    { type: "Database", pct: 0.24 },
+    { type: "FileShare", pct: 0.14 },
+    { type: "M365", pct: 0.05 },
+    { type: "Kubernetes", pct: 0.02 },
+  ],
+  [
+    { type: "VM", pct: 0.42 },
+    { type: "Database", pct: 0.28 },
+    { type: "FileShare", pct: 0.16 },
+    { type: "M365", pct: 0.08 },
+    { type: "NAS", pct: 0.06 },
+  ],
+];
+
+function buildLineItem(seed: SeedBillingRow): BillingLineItem {
+  const tenant = tenants.find((t) => t.name === seed.name);
+  const baseCharge = seed.usedTB * seed.ratePerTB - seed.overageTB * seed.ratePerTB;
+  const overageCharge = seed.overageTB * seed.ratePerTB;
+
+  const adjustments =
+    seed.name === "Commonwealth Legal Services"
+      ? [
+          {
+            id: "adj_commonwealth_sla",
+            description: "SLA credit",
+            amount: -420,
+            reason: "Credit applied for SLA breach incident #INC-2026-03-218",
+            appliedBy: "Lisa Chen",
+            appliedAt: "2026-04-02T09:14:00Z",
+          },
+        ]
+      : [];
+
+  const dispute: BillingDispute | undefined =
+    seed.status === "Disputed"
+      ? {
+          id: "DISPUTE-2026-04-007",
+          filedAt: "2026-04-22T09:14:00Z",
+          filedBy: "Casey Park",
+          contactEmail: "casey.park@commonwealthlegal.com",
+          status: "Awaiting Review",
+          disputedAmount: 780,
+          reason:
+            "Overage charges were not communicated proactively. Per our service agreement section 4.2, MSP must notify tenant before allowing overage. We received no notification.",
+          activity: [
+            { at: "2026-04-22T09:14:00Z", by: "Casey Park", note: "Dispute filed by tenant billing contact." },
+            { at: "2026-04-22T14:23:00Z", by: "Lisa Chen", note: "Acknowledged. Pulling notification logs." },
+            { at: "2026-04-23T11:02:00Z", by: "Lisa Chen", note: "Notification logs retrieved. See evidence package." },
+            { at: "2026-04-24T16:45:00Z", by: "Lisa Chen", note: "Awaiting tenant response with evidence package." },
+          ],
+          evidence: [
+            {
+              id: "ev-notif-2026-04-14",
+              description: "Notification log Apr 14 — Email to billing@commonwealthlegal.com sent at threshold breach (delivery confirmed)",
+            },
+            {
+              id: "ev-policy-onboard",
+              description: "Tenant overage policy: Allow with notification (configured during onboarding, signed by Casey Park)",
+            },
+          ],
+        }
+      : undefined;
+
+  const usedForBreakdown = seed.usedTB;
+  const preset = WORKLOAD_BREAKDOWN_PRESETS[Math.abs(seed.name.length) % 2];
+  const workloadBreakdown = preset.map((p) => ({
+    type: p.type,
+    consumedTB: Math.max(0.5, Number((usedForBreakdown * p.pct).toFixed(1))),
+  }));
+  const storageTierBreakdown = [
+    { tier: "Performance" as const, consumedTB: Number((seed.usedTB * 0.2).toFixed(1)) },
+    { tier: "Capacity" as const, consumedTB: Number((seed.usedTB * 0.65).toFixed(1)) },
+    { tier: "Archive" as const, consumedTB: Number((seed.usedTB * 0.15).toFixed(1)) },
+  ];
+
+  const taxNote =
+    seed.industry === "Healthcare" || seed.name.toLowerCase().includes("hospital") || seed.name.toLowerCase().includes("medical")
+      ? "Tax exempt: Healthcare entity, valid exemption certificate on file"
+      : "Subject to applicable sales tax (calculated at invoice generation)";
+
+  const isReseller = seed.name === "Crawford & Associates LLP" || seed.name === "Commonwealth Legal Services";
+  const resellerCommissionPct = isReseller ? 15 : undefined;
+
+  return {
+    id: `bli_${seed.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-2026-04`,
+    tenantId: tenant?.id ?? `t_unknown_${seed.name}`,
+    tenantName: seed.name,
+    industry: seed.industry,
+    tier: seed.tier,
+    resellerId: isReseller ? "rsl_apex" : undefined,
+    committedTB: seed.committedTB,
+    usedTB: seed.usedTB,
+    overageTB: seed.overageTB,
+    utilizationPct: seed.utilizationPct,
+    ratePerTB: seed.ratePerTB,
+    baseCharge,
+    overageCharge,
+    adjustments,
+    resellerCommissionPct,
+    totalCharge: seed.totalCharge,
+    status: seed.status,
+    invoiceId: seed.status === "Invoiced" || seed.status === "Paid" ? `INV-2026-03-${String(Math.abs(seed.name.length) % 100).padStart(3, "0")}` : undefined,
+    invoicedAt: seed.status === "Invoiced" || seed.status === "Paid" ? "2026-04-02T09:00:00Z" : undefined,
+    paidAt: seed.status === "Paid" ? "2026-04-08T15:24:00Z" : undefined,
+    dispute,
+    workloadBreakdown,
+    storageTierBreakdown,
+    metrics: {
+      totalRestorePoints: 1_400 + Math.abs(seed.usedTB * 47) | 0,
+      transferOutTB: Number((seed.usedTB * 0.03 + 0.5).toFixed(1)),
+      backupJobsExecuted: 600 + (seed.usedTB * 16) | 0,
+    },
+    taxNote,
+  };
+}
+
+const billingLineItems: BillingLineItem[] = SEED_BILLING_ROWS.map(buildLineItem);
+
+const billingPeriod: BillingPeriod = {
+  periodStart: "2026-04-01T00:00:00Z",
+  periodEnd: "2026-04-30T23:59:59Z",
+  label: "April 2026",
+  status: "open",
+  reconciledAt: new Date(Date.parse("2026-04-25T18:00:00Z") - 4 * 60 * 60_000).toISOString(),
+};
+
+const quotaEnforcement: QuotaEnforcementRow[] = [
+  {
+    id: "qer_lakewood",
+    tenantId: tenants.find((t) => t.name === "Lakewood Community Health")?.id ?? "",
+    tenantName: "Lakewood Community Health",
+    quotaType: "Storage",
+    currentUsage: "65 TB",
+    softLimit: "47 TB",
+    hardLimit: "59 TB",
+    hardLimitBehavior: "Notify",
+    status: "Hard Breach",
+    detail: "HARD BREACH +6 TB · notification sent",
+  },
+  {
+    id: "qer_commonwealth",
+    tenantId: tenants.find((t) => t.name === "Commonwealth Legal Services")?.id ?? "",
+    tenantName: "Commonwealth Legal Services",
+    quotaType: "Storage",
+    currentUsage: "58 TB",
+    softLimit: "37 TB",
+    hardLimit: "46 TB",
+    hardLimitBehavior: "Notify",
+    status: "Hard Breach",
+    detail: "HARD BREACH +12 TB · dispute filed",
+  },
+  {
+    id: "qer_sterling",
+    tenantId: tenants.find((t) => t.name === "Sterling Aerospace")?.id ?? "",
+    tenantName: "Sterling Aerospace",
+    quotaType: "Storage",
+    currentUsage: "67 TB",
+    softLimit: "54 TB",
+    hardLimit: "67 TB",
+    hardLimitBehavior: "Block",
+    status: "Hard Breach",
+    detail: "HARD BREACH AT LIMIT · backups blocked",
+  },
+  {
+    id: "qer_pinnacle",
+    tenantId: tenants.find((t) => t.name === "Pinnacle Insurance Group")?.id ?? "",
+    tenantName: "Pinnacle Insurance Group",
+    quotaType: "Storage",
+    currentUsage: "37 TB",
+    softLimit: "33 TB",
+    hardLimit: "41 TB",
+    hardLimitBehavior: "Notify",
+    status: "Approaching Soft",
+    detail: "Approaching soft limit",
+  },
+  {
+    id: "qer_sapphire",
+    tenantId: tenants.find((t) => t.name === "Sapphire Hotels International")?.id ?? "",
+    tenantName: "Sapphire Hotels International",
+    quotaType: "Workload Count",
+    currentUsage: "178 / 200",
+    softLimit: "160",
+    hardLimit: "200",
+    hardLimitBehavior: "Block",
+    status: "Approaching Hard",
+    detail: "Approaching hard limit · plan tier upgrade",
+  },
+];
+
+// 12-month historical billing per tenant for trend chart
+function buildBillingHistory(): Record<string, Array<{ month: string; total: number }>> {
+  const out: Record<string, Array<{ month: string; total: number }>> = {};
+  for (const li of billingLineItems) {
+    const months: Array<{ month: string; total: number }> = [];
+    for (let i = 11; i >= 1; i -= 1) {
+      const d = new Date(Date.UTC(2026, 4 - i, 1));
+      const drift = (12 - i) * 0.04;
+      const noise = ((Math.abs(li.tenantName.length) % 7) - 3) * 0.015;
+      const factor = Math.max(0.3, 1 - drift + noise);
+      months.push({
+        month: d.toISOString(),
+        total: Math.round(li.totalCharge * factor),
+      });
+    }
+    months.push({ month: "2026-04-01T00:00:00Z", total: li.totalCharge });
+    out[li.tenantId] = months;
+  }
+  return out;
+}
+
+const billingHistory = buildBillingHistory();
+
 export const mockData = {
   tenants,
   policies,
@@ -2043,6 +2300,10 @@ export const mockData = {
   accessRequests,
   compliancePosture,
   securitySchedule,
+  billingLineItems,
+  billingPeriod,
+  quotaEnforcement,
+  billingHistory,
 };
 
 export const currentOperator: Operator = operators[0];
