@@ -213,3 +213,190 @@ export interface OnboardingDraft {
   policyTemplateId?: string;
   isolationConfirmed?: boolean;
 }
+
+// ── Tenant detail surface ────────────────────────────────────────────────────
+
+export type AlarmState = "triggered" | "acknowledged" | "resolved";
+
+export type AlarmCategory =
+  | "Backup Failure"
+  | "Capacity"
+  | "Threat"
+  | "Policy Drift"
+  | "Configuration"
+  | "Compliance"
+  | "Connectivity";
+
+export interface Alarm {
+  id: string;
+  tenantId: string;
+  title: string;
+  description: string;
+  category: AlarmCategory;
+  severity: AlertSeverity;
+  state: AlarmState;
+  triggeredAt: string;
+  workloadId?: string;
+  jobId?: string;
+  acknowledgedBy?: string;
+  acknowledgedAt?: string;
+  acknowledgmentNote?: string;
+  assignedTo?: string;
+  assignedAt?: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  resolutionNote?: string;
+}
+
+export type WorkloadType =
+  | "VM"
+  | "Database"
+  | "FileShare"
+  | "M365"
+  | "Kubernetes"
+  | "NAS";
+
+export type WorkloadStatus = "Healthy" | "Warning" | "Failed" | "Unprotected";
+
+export interface Workload {
+  id: string;
+  tenantId: string;
+  name: string;
+  type: WorkloadType;
+  host: string;
+  sizeTB: number;
+  policyId: string;
+  policyVersion: number;
+  status: WorkloadStatus;
+  lastBackupAt: string;
+  lastBackupStatus: BackupJobStatus;
+  nextBackupAt: string;
+  agentVersion: string;
+  lastCheckinAt: string;
+  connectivity: "online" | "degraded" | "offline";
+}
+
+export type JobType =
+  | "Full"
+  | "Incremental"
+  | "Synthetic Full"
+  | "Active Full"
+  | "On-Demand";
+
+export interface JobSession {
+  id: string;
+  tenantId: string;
+  workloadId: string;
+  workloadName: string;
+  workloadType: WorkloadType;
+  jobType: JobType;
+  status: BackupJobStatus;
+  startedAt: string;
+  endedAt?: string;
+  durationSec: number;
+  bytesTransferred: number;
+  bytesSource: number;
+  throughputMBps: number;
+  dedupRatio: number;
+  compressionRatio: number;
+  policyId: string;
+  errorCode?: string;
+  errorMessage?: string;
+  log: JobLogLine[];
+  progress?: number;
+}
+
+export type JobLogLevel = "INFO" | "WARN" | "ERROR";
+
+export interface JobLogLine {
+  ts: string;
+  level: JobLogLevel;
+  message: string;
+}
+
+export interface RestorePoint {
+  id: string;
+  workloadId: string;
+  capturedAt: string;
+  sizeBytes: number;
+  retentionExpiresAt: string;
+  immutable: boolean;
+  jobId: string;
+}
+
+export type ThreatEventStatus =
+  | "Investigating"
+  | "Contained"
+  | "Resolved"
+  | "False Positive";
+
+export interface ThreatEvent {
+  id: string;
+  tenantId: string;
+  detectionType: string;
+  severity: AlertSeverity;
+  detectedAt: string;
+  status: ThreatEventStatus;
+  analyst: string;
+  detail: string;
+}
+
+export interface PolicyOverride {
+  id: string;
+  field: string;
+  templateValue: string;
+  overrideValue: string;
+  appliedBy: string;
+  appliedAt: string;
+  reason: string;
+}
+
+export interface PolicyAssignment {
+  tenantId: string;
+  policyId: string;
+  policyVersion: number;
+  appliedAt: string;
+  appliedBy: string;
+  overrides: PolicyOverride[];
+  history: PolicyAssignmentEvent[];
+}
+
+export interface PolicyAssignmentEvent {
+  id: string;
+  occurredAt: string;
+  actor: string;
+  description: string;
+  kind: "applied" | "override-added" | "override-removed" | "auto-migrated";
+}
+
+export interface DetailedAuditEvent extends AuditEvent {
+  sessionId: string;
+  userAgent: string;
+  geo: string;
+  before?: Record<string, string>;
+  after?: Record<string, string>;
+  description?: string;
+}
+
+export interface QuotaUsage {
+  storage: { used: number; limit: number; unit: "TB" };
+  workloads: { used: number; limit: number; unit: "workloads" };
+  transferOutThisMonth: { used: number; limit: number; unit: "TB" };
+  restorePoints: { used: number; limit: number; unit: "points" };
+}
+
+export interface MonthlyConsumption {
+  month: string; // ISO start of month
+  peakUsageTB: number;
+  avgUsageTB: number;
+  restorePoints: number;
+  transferOutTB: number;
+}
+
+export interface KeyRotationStatus {
+  algorithm: "AES-256-GCM";
+  keySource: "Rubrik-managed" | "Customer-managed";
+  rotationDays: number;
+  lastRotationAt: string;
+  nextRotationAt: string;
+}

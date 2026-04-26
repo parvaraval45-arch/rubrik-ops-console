@@ -1,10 +1,13 @@
 import { faker } from "@faker-js/faker";
 import type {
+  Alarm,
+  AlarmCategory,
   Alert,
   AlertSeverity,
   AuditEvent,
   BackupJob,
   Cluster,
+  DetailedAuditEvent,
   Industry,
   Invoice,
   InvoiceLineItem,
@@ -12,14 +15,30 @@ import type {
   IsolationCheckId,
   IsolationStatus,
   IsolationViolation,
+  JobLogLevel,
+  JobLogLine,
+  JobSession,
+  JobType,
+  KeyRotationStatus,
+  MonthlyConsumption,
   Operator,
   Policy,
+  PolicyAssignment,
+  PolicyAssignmentEvent,
   PolicyKind,
+  PolicyOverride,
   PolicyVersion,
+  QuotaUsage,
   Region,
+  RestorePoint,
   Tenant,
-  Tier,
   TenantStatus,
+  ThreatEvent,
+  ThreatEventStatus,
+  Tier,
+  Workload,
+  WorkloadStatus,
+  WorkloadType,
 } from "@/types";
 
 faker.seed(42);
@@ -589,6 +608,493 @@ for (const policy of policies) {
   policy.appliedTenants = applied;
 }
 
+// ── Per-tenant detail data ────────────────────────────────────────────────────
+
+const DETAIL_REFERENCE = Date.parse("2026-04-26T18:00:00Z");
+
+const ALARM_TEMPLATES: Array<{ category: AlarmCategory; title: string; description: string; severity: AlertSeverity }> = [
+  { category: "Backup Failure", severity: "critical", title: "Backup job failed: prod-db-mercy-01", description: "Repository connection timeout. Job retried twice with no success." },
+  { category: "Backup Failure", severity: "warning", title: "Backup window slipped 22 minutes", description: "VMware/finance-app exceeded the 4-hour RPO. Next run rescheduled." },
+  { category: "Capacity", severity: "warning", title: "Storage quota at 91%", description: "Tenant approaching commit. Overage charges will apply on next reconciliation." },
+  { category: "Threat", severity: "critical", title: "Anomalous file entropy on /finance-share", description: "12.4% of files in last hour show ransomware-pattern entropy. Recovery isolation engaged." },
+  { category: "Threat", severity: "warning", title: "Unusual download volume from svc-account/etl-runner", description: "Download volume 42x baseline over rolling 1h window." },
+  { category: "Policy Drift", severity: "warning", title: "Policy override active >30 days", description: "Retention override is older than configured review window." },
+  { category: "Configuration", severity: "info", title: "Agent version 8.1.2 available", description: "Workload agents on this tenant are 2 minor versions behind current release." },
+  { category: "Compliance", severity: "warning", title: "HIPAA attestation expires in 14 days", description: "Annual attestation export must be re-generated for compliance audit." },
+  { category: "Connectivity", severity: "warning", title: "Repository link degraded: rsc-repo-east-04", description: "Latency to secondary repository is 2.4x baseline. Failover ready." },
+];
+
+const WORKLOAD_HOSTS: Record<WorkloadType, string> = {
+  VM: "esx-prod",
+  Database: "sql-prod",
+  FileShare: "fs-prod",
+  M365: "tenant",
+  Kubernetes: "k8s-prod",
+  NAS: "nas-prod",
+};
+
+const WORKLOAD_DISTRIBUTION: Array<{ type: WorkloadType; share: number }> = [
+  { type: "VM", share: 0.52 },
+  { type: "Database", share: 0.16 },
+  { type: "FileShare", share: 0.12 },
+  { type: "M365", share: 0.08 },
+  { type: "Kubernetes", share: 0.06 },
+  { type: "NAS", share: 0.06 },
+];
+
+function workloadName(type: WorkloadType, idx: number, tenantSlug: string): string {
+  switch (type) {
+    case "VM":
+      return `vm-${tenantSlug}-app-${idx.toString().padStart(2, "0")}`;
+    case "Database":
+      return `${faker.helpers.arrayElement(["sql", "ora", "pg"])}-${tenantSlug}-${idx.toString().padStart(2, "0")}`;
+    case "FileShare":
+      return `${faker.helpers.arrayElement(["finance", "research", "legal", "ops"])}-share-${idx}`;
+    case "M365":
+      return `m365/${faker.helpers.arrayElement(["exchange", "sharepoint", "onedrive", "teams"])}-${idx}`;
+    case "Kubernetes":
+      return `k8s/${faker.helpers.arrayElement(["payments", "billing", "checkout", "auth", "etl"])}-svc-${idx}`;
+    case "NAS":
+      return `nas/${faker.helpers.arrayElement(["archive", "media", "lab"])}-vol-${idx}`;
+  }
+}
+
+function tenantSlug(tenant: Tenant): string {
+  return tenant.name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 16);
+}
+
+function generateWorkloadsForTenant(tenant: Tenant): Workload[] {
+  const slug = tenantSlug(tenant);
+  const total = tenant.workloadCount;
+  const out: Workload[] = [];
+  let idx = 0;
+  for (const dist of WORKLOAD_DISTRIBUTION) {
+    const count = Math.max(1, Math.round(total * dist.share));
+    for (let i = 0; i < count; i += 1) {
+      idx += 1;
+      const lastBackupOffsetMin = faker.number.int({ min: 5, max: 60 * 24 });
+      const lastBackupAt = new Date(DETAIL_REFERENCE - lastBackupOffsetMin * 60_000).toISOString();
+      const nextBackupOffsetMin = faker.number.int({ min: 30, max: 60 * 8 });
+      const nextBackupAt = new Date(DETAIL_REFERENCE + nextBackupOffsetMin * 60_000).toISOString();
+      const status: WorkloadStatus = faker.helpers.weightedArrayElement([
+        { value: "Healthy", weight: 86 },
+        { value: "Warning", weight: 9 },
+        { value: "Failed", weight: 4 },
+        { value: "Unprotected", weight: 1 },
+      ]);
+      const lastBackupStatus =
+        status === "Failed"
+          ? "failed"
+          : status === "Warning"
+            ? faker.helpers.arrayElement(["succeeded", "skipped"] as const)
+            : "succeeded";
+      out.push({
+        id: `wl_${tenant.id}_${idx.toString().padStart(3, "0")}`,
+        tenantId: tenant.id,
+        name: workloadName(dist.type, idx, slug),
+        type: dist.type,
+        host: `${WORKLOAD_HOSTS[dist.type]}-${slug}-${faker.number.int({ min: 1, max: 9 }).toString().padStart(2, "0")}.${slug}.local`,
+        sizeTB: Number(
+          faker.number.float({ min: 0.05, max: 8, fractionDigits: 2 }).toFixed(2),
+        ),
+        policyId: "pol_0",
+        policyVersion: 4,
+        status,
+        lastBackupAt,
+        lastBackupStatus,
+        nextBackupAt,
+        agentVersion: faker.helpers.arrayElement(["8.1.0", "8.1.1", "8.1.2"]),
+        lastCheckinAt: new Date(
+          DETAIL_REFERENCE - faker.number.int({ min: 1, max: 30 }) * 60_000,
+        ).toISOString(),
+        connectivity: faker.helpers.weightedArrayElement([
+          { value: "online", weight: 92 },
+          { value: "degraded", weight: 6 },
+          { value: "offline", weight: 2 },
+        ]),
+      });
+    }
+  }
+  // Trim or pad to tenant.workloadCount exactly
+  return out.slice(0, total);
+}
+
+function generateAlarmsForTenant(tenant: Tenant, workloads: Workload[]): Alarm[] {
+  const count = faker.number.int({ min: 5, max: 10 });
+  const out: Alarm[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const tpl = faker.helpers.arrayElement(ALARM_TEMPLATES);
+    const minutesAgo = faker.number.int({ min: 8, max: 60 * 36 });
+    const triggeredAt = new Date(DETAIL_REFERENCE - minutesAgo * 60_000).toISOString();
+    const state = faker.helpers.weightedArrayElement([
+      { value: "triggered" as const, weight: 6 },
+      { value: "acknowledged" as const, weight: 3 },
+      { value: "resolved" as const, weight: 1 },
+    ]);
+    const ackBy = state !== "triggered" ? faker.helpers.arrayElement(operators).name : undefined;
+    const ackAt = ackBy
+      ? new Date(DETAIL_REFERENCE - faker.number.int({ min: 1, max: minutesAgo - 1 }) * 60_000).toISOString()
+      : undefined;
+    const resolvedBy =
+      state === "resolved" ? faker.helpers.arrayElement(operators).name : undefined;
+    const resolvedAt = resolvedBy
+      ? new Date(
+          DETAIL_REFERENCE -
+            faker.number.int({ min: 1, max: Math.max(1, minutesAgo - 5) }) * 60_000,
+        ).toISOString()
+      : undefined;
+    out.push({
+      id: `alm_${tenant.id}_${i.toString().padStart(3, "0")}`,
+      tenantId: tenant.id,
+      title: tpl.title,
+      description: tpl.description,
+      category: tpl.category,
+      severity: tpl.severity,
+      state,
+      triggeredAt,
+      workloadId: tpl.category === "Backup Failure" ? faker.helpers.arrayElement(workloads).id : undefined,
+      acknowledgedBy: ackBy,
+      acknowledgedAt: ackAt,
+      acknowledgmentNote:
+        ackBy && faker.datatype.boolean()
+          ? "Investigating with the platform team. Failover repository ready."
+          : undefined,
+      assignedTo: faker.datatype.boolean({ probability: 0.4 })
+        ? faker.helpers.arrayElement(operators).name
+        : undefined,
+      assignedAt: undefined,
+      resolvedBy,
+      resolvedAt,
+      resolutionNote: resolvedBy
+        ? "Repository link restored after failover. Successor backup completed cleanly."
+        : undefined,
+    });
+  }
+  return out.sort((a, b) => +new Date(b.triggeredAt) - +new Date(a.triggeredAt));
+}
+
+const JOB_LOG_TEMPLATES = (workload: string, jobId: string, success: boolean): JobLogLine[] => {
+  const baseline: Array<{ level: JobLogLevel; message: string; offset: number }> = [
+    { level: "INFO", message: `Starting incremental backup of ${workload}`, offset: 0 },
+    { level: "INFO", message: "Connecting to source via Envoy proxy", offset: 1 },
+    { level: "INFO", message: `Snapshot created: snap-${jobId.slice(-6)}`, offset: 3 },
+    { level: "INFO", message: "Reading changed blocks (CBT enabled)", offset: 6 },
+    { level: "INFO", message: "Transferred 1.2 TB compressed (3.1 TB raw)", offset: 248 },
+    { level: "INFO", message: "Verifying integrity (SHA-256)", offset: 252 },
+  ];
+  const tail: Array<{ level: JobLogLevel; message: string; offset: number }> = success
+    ? [{ level: "INFO", message: "Backup completed successfully via rsc-repo-east-05", offset: 268 }]
+    : [
+        { level: "ERROR", message: "Repository connection timeout: rsc-repo-east-04", offset: 268 },
+        { level: "WARN", message: "Retrying with secondary repository", offset: 268 },
+        { level: "ERROR", message: "Secondary repository also unreachable. Aborting job.", offset: 280 },
+      ];
+  const start = DETAIL_REFERENCE - 60_000 * 5; // arbitrary baseline
+  return [...baseline, ...tail].map((l) => ({
+    ts: new Date(start + l.offset * 1_000).toISOString(),
+    level: l.level,
+    message: l.message,
+  }));
+};
+
+function generateJobsForTenant(tenant: Tenant, workloads: Workload[]): JobSession[] {
+  const out: JobSession[] = [];
+  const count = 110;
+  for (let i = 0; i < count; i += 1) {
+    const workload = faker.helpers.arrayElement(workloads);
+    const minutesAgo = faker.number.int({ min: 5, max: 60 * 24 * 7 });
+    const startedAt = new Date(DETAIL_REFERENCE - minutesAgo * 60_000).toISOString();
+    const status = faker.helpers.weightedArrayElement([
+      { value: "succeeded" as const, weight: 84 },
+      { value: "failed" as const, weight: 8 },
+      { value: "running" as const, weight: 2 },
+      { value: "queued" as const, weight: 2 },
+      { value: "skipped" as const, weight: 4 },
+    ]);
+    const durationSec =
+      status === "running" || status === "queued"
+        ? 0
+        : faker.number.int({ min: 80, max: 4_800 });
+    const endedAt =
+      status === "running" || status === "queued"
+        ? undefined
+        : new Date(new Date(startedAt).getTime() + durationSec * 1_000).toISOString();
+    const bytesSource = faker.number.int({ min: 50_000_000, max: 8_000_000_000_000 });
+    const ratioDedup = faker.number.float({ min: 1.4, max: 4.6, fractionDigits: 2 });
+    const ratioCompression = faker.number.float({ min: 1.6, max: 3.8, fractionDigits: 2 });
+    const bytesTransferred = Math.round(
+      bytesSource / (ratioDedup * ratioCompression),
+    );
+    const id = `job_${tenant.id}_${i.toString().padStart(4, "0")}`;
+    out.push({
+      id,
+      tenantId: tenant.id,
+      workloadId: workload.id,
+      workloadName: workload.name,
+      workloadType: workload.type,
+      jobType: faker.helpers.arrayElement([
+        "Incremental",
+        "Incremental",
+        "Incremental",
+        "Synthetic Full",
+        "Full",
+        "Active Full",
+      ] as JobType[]),
+      status,
+      startedAt,
+      endedAt,
+      durationSec,
+      bytesTransferred,
+      bytesSource,
+      throughputMBps:
+        durationSec > 0 ? Math.round(bytesTransferred / 1_000_000 / durationSec) : 0,
+      dedupRatio: ratioDedup,
+      compressionRatio: ratioCompression,
+      policyId: workload.policyId,
+      errorCode: status === "failed" ? faker.helpers.arrayElement(["RBK-2041", "RBK-3107", "RBK-1188"]) : undefined,
+      errorMessage:
+        status === "failed"
+          ? faker.helpers.arrayElement([
+              "Repository connection timeout",
+              "Authentication token expired",
+              "Source workload offline at snapshot time",
+            ])
+          : undefined,
+      log:
+        status === "succeeded" || status === "failed"
+          ? JOB_LOG_TEMPLATES(workload.name, id, status === "succeeded")
+          : [],
+    });
+  }
+  return out.sort((a, b) => +new Date(b.startedAt) - +new Date(a.startedAt));
+}
+
+function generateRestorePointsForTenant(tenant: Tenant, workloads: Workload[]): RestorePoint[] {
+  const out: RestorePoint[] = [];
+  for (const wl of workloads.slice(0, 14)) {
+    for (let i = 0; i < 30; i += 1) {
+      const hoursAgo = i * 6 + faker.number.int({ min: 0, max: 3 });
+      const captured = new Date(DETAIL_REFERENCE - hoursAgo * 60 * 60_000).toISOString();
+      out.push({
+        id: `rp_${wl.id}_${i.toString().padStart(2, "0")}`,
+        workloadId: wl.id,
+        capturedAt: captured,
+        sizeBytes: faker.number.int({ min: 200_000_000, max: 2_000_000_000_000 }),
+        retentionExpiresAt: new Date(
+          DETAIL_REFERENCE + (2_555 - hoursAgo / 24) * 24 * 60 * 60_000,
+        ).toISOString(),
+        immutable: hoursAgo > 12,
+        jobId: `job_${tenant.id}_${i.toString().padStart(4, "0")}`,
+      });
+    }
+  }
+  return out;
+}
+
+function generateThreatsForTenant(tenant: Tenant): ThreatEvent[] {
+  const detections: Array<{ type: string; severity: AlertSeverity; status: ThreatEventStatus; detail: string }> = [
+    { type: "Anomalous Encryption", severity: "critical", status: "Contained", detail: "Surge in entropy across /finance-share. Recovery isolation engaged within 2 minutes." },
+    { type: "Suspicious File Modification", severity: "info", status: "Resolved", detail: "Mass rename detected on archive volume. Confirmed scheduled migration job." },
+    { type: "Privilege Escalation Attempt", severity: "info", status: "Resolved", detail: "Tenant admin role assigned via approved change ticket CHG-4128." },
+    { type: "Unusual Login Pattern", severity: "info", status: "Resolved", detail: "Login from new geo for operator priya.sharma. Verified via MFA + ticket." },
+    { type: "Large Outbound Transfer", severity: "info", status: "Investigating", detail: "Transfer-out volume 4.2x baseline triggered review. Awaiting customer confirmation." },
+  ];
+  return detections.map((d, i) => ({
+    id: `thr_${tenant.id}_${i}`,
+    tenantId: tenant.id,
+    detectionType: d.type,
+    severity: d.severity,
+    detectedAt: new Date(DETAIL_REFERENCE - (i + 1) * 12 * 60 * 60_000).toISOString(),
+    status: d.status,
+    analyst: faker.helpers.arrayElement(operators).name,
+    detail: d.detail,
+  }));
+}
+
+function generatePolicyAssignment(tenant: Tenant): PolicyAssignment {
+  const onboardedAt = new Date(DETAIL_REFERENCE - 47 * 24 * 60 * 60_000).toISOString();
+  const overrideOdds = faker.number.float({ min: 0, max: 1 });
+  const overrides: PolicyOverride[] =
+    overrideOdds > 0.6
+      ? [
+          {
+            id: `ovr_${tenant.id}_retention`,
+            field: "Retention",
+            templateValue: "7 years (2,555 days)",
+            overrideValue: "10 years (3,650 days)",
+            appliedBy: "Alex Morrison",
+            appliedAt: new Date(DETAIL_REFERENCE - 23 * 24 * 60 * 60_000).toISOString(),
+            reason: `${tenant.name} audit requirement — retention extended per legal hold.`,
+          },
+        ]
+      : [];
+  const history: PolicyAssignmentEvent[] = [
+    {
+      id: `pae_${tenant.id}_1`,
+      occurredAt: onboardedAt,
+      actor: "Alex Morrison",
+      description: "Healthcare HIPAA Gold v3 applied at onboarding.",
+      kind: "applied",
+    },
+    ...(overrides.length
+      ? [
+          {
+            id: `pae_${tenant.id}_2`,
+            occurredAt: overrides[0].appliedAt,
+            actor: overrides[0].appliedBy,
+            description: `Override added — ${overrides[0].field} extended to ${overrides[0].overrideValue}.`,
+            kind: "override-added" as const,
+          },
+        ]
+      : []),
+    {
+      id: `pae_${tenant.id}_3`,
+      occurredAt: new Date(DETAIL_REFERENCE - 12 * 24 * 60 * 60_000).toISOString(),
+      actor: "System",
+      description: "Auto-migrated to template version v4 (template upgrade).",
+      kind: "auto-migrated",
+    },
+  ];
+  return {
+    tenantId: tenant.id,
+    policyId: "pol_0",
+    policyVersion: 4,
+    appliedAt: onboardedAt,
+    appliedBy: "Alex Morrison",
+    overrides,
+    history,
+  };
+}
+
+const AUDIT_ACTIONS_DETAIL: Array<{ action: string; description: string }> = [
+  { action: "tenant.create", description: "Tenant created and onboarded with Healthcare HIPAA Gold v3 policy." },
+  { action: "user.login", description: "Operator logged in via SSO with MFA." },
+  { action: "policy.apply", description: "Applied Healthcare HIPAA Gold v3 to all production workloads." },
+  { action: "backup.run", description: "Triggered on-demand backup of prod-db-mercy-01." },
+  { action: "alarm.acknowledge", description: "Acknowledged alarm: Backup job failed: prod-db-mercy-01." },
+  { action: "policy.override", description: "Added override on Retention: 7y → 10y." },
+  { action: "key.rotate", description: "Rotated tenant encryption key (scheduled)." },
+  { action: "report.export", description: "Exported HIPAA attestation report (PDF)." },
+  { action: "capacity.threshold", description: "Capacity crossed 80% soft limit." },
+  { action: "restore.initiate", description: "Initiated workload restore for prod-db-mercy-01 to point-in-time." },
+  { action: "tenant.update", description: "Updated tenant primary contact email." },
+  { action: "policy.migrate", description: "Auto-migrated tenant to template v4." },
+];
+
+function generateDetailedAuditForTenant(tenant: Tenant): DetailedAuditEvent[] {
+  const out: DetailedAuditEvent[] = [];
+  const count = faker.number.int({ min: 22, max: 36 });
+  for (let i = 0; i < count; i += 1) {
+    const tpl = faker.helpers.arrayElement(AUDIT_ACTIONS_DETAIL);
+    const operator = faker.helpers.arrayElement(operators);
+    const minutesAgo = faker.number.int({ min: 5, max: 60 * 24 * 47 });
+    const occurredAt = new Date(DETAIL_REFERENCE - minutesAgo * 60_000).toISOString();
+    const sessionId = `sess_${faker.string.alphanumeric({ length: 8, casing: "lower" })}`;
+    const before = tpl.action === "policy.override" ? { Retention: "7 years" } : undefined;
+    const after = tpl.action === "policy.override" ? { Retention: "10 years" } : undefined;
+    out.push({
+      id: `audit_${tenant.id}_${i.toString().padStart(3, "0")}`,
+      actor: operator.name,
+      actorRole: operator.role,
+      action: tpl.action,
+      target: tenant.name,
+      tenantId: tenant.id,
+      outcome: faker.helpers.weightedArrayElement([
+        { value: "success", weight: 9 },
+        { value: "failure", weight: 1 },
+      ]),
+      occurredAt,
+      ipAddress: faker.internet.ipv4(),
+      sessionId,
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+      geo: faker.helpers.arrayElement([
+        "San Francisco, CA, US",
+        "New York, NY, US",
+        "Seattle, WA, US",
+        "Austin, TX, US",
+      ]),
+      before,
+      after,
+      description: tpl.description,
+    });
+  }
+  return out.sort((a, b) => +new Date(b.occurredAt) - +new Date(a.occurredAt));
+}
+
+function generateMonthlyConsumption(tenant: Tenant): MonthlyConsumption[] {
+  const out: MonthlyConsumption[] = [];
+  const now = new Date(DETAIL_REFERENCE);
+  for (let m = 11; m >= 0; m -= 1) {
+    const start = new Date(now.getFullYear(), now.getMonth() - m, 1).toISOString();
+    const trend = 1 + (11 - m) * 0.018;
+    const baseUsed = tenant.capacityUsedTB / trend;
+    out.push({
+      month: start,
+      peakUsageTB: Number((baseUsed * faker.number.float({ min: 1.05, max: 1.15, fractionDigits: 2 })).toFixed(2)),
+      avgUsageTB: Number(baseUsed.toFixed(2)),
+      restorePoints: faker.number.int({ min: 800, max: 1_400 }),
+      transferOutTB: Number(faker.number.float({ min: 0.4, max: 4.6, fractionDigits: 2 }).toFixed(2)),
+    });
+  }
+  return out;
+}
+
+function generateQuotaForTenant(tenant: Tenant): QuotaUsage {
+  return {
+    storage: { used: tenant.capacityUsedTB, limit: tenant.capacityCommittedTB, unit: "TB" },
+    workloads: { used: tenant.workloadCount, limit: Math.round(tenant.workloadCount * 1.35), unit: "workloads" },
+    transferOutThisMonth: { used: Number(faker.number.float({ min: 1.4, max: 6.8, fractionDigits: 1 }).toFixed(1)), limit: 10, unit: "TB" },
+    restorePoints: { used: faker.number.int({ min: 8_000, max: 22_000 }), limit: 50_000, unit: "points" },
+  };
+}
+
+function generateKeyRotationForTenant(): KeyRotationStatus {
+  const lastRotationAt = new Date(DETAIL_REFERENCE - 23 * 24 * 60 * 60_000).toISOString();
+  const nextRotationAt = new Date(DETAIL_REFERENCE + 67 * 24 * 60 * 60_000).toISOString();
+  return {
+    algorithm: "AES-256-GCM",
+    keySource: "Rubrik-managed",
+    rotationDays: 90,
+    lastRotationAt,
+    nextRotationAt,
+  };
+}
+
+export interface TenantDetail {
+  workloads: Workload[];
+  alarms: Alarm[];
+  jobs: JobSession[];
+  restorePoints: RestorePoint[];
+  threats: ThreatEvent[];
+  policy: PolicyAssignment;
+  audit: DetailedAuditEvent[];
+  monthly: MonthlyConsumption[];
+  quota: QuotaUsage;
+  keyRotation: KeyRotationStatus;
+}
+
+const tenantDetails: Record<string, TenantDetail> = {};
+for (const t of tenants) {
+  const wls = generateWorkloadsForTenant(t);
+  tenantDetails[t.id] = {
+    workloads: wls,
+    alarms: generateAlarmsForTenant(t, wls),
+    jobs: generateJobsForTenant(t, wls),
+    restorePoints: generateRestorePointsForTenant(t, wls),
+    threats: generateThreatsForTenant(t),
+    policy: generatePolicyAssignment(t),
+    audit: generateDetailedAuditForTenant(t),
+    monthly: generateMonthlyConsumption(t),
+    quota: generateQuotaForTenant(t),
+    keyRotation: generateKeyRotationForTenant(),
+  };
+}
+
 export const mockData = {
   tenants,
   policies,
@@ -600,6 +1106,7 @@ export const mockData = {
   isolationViolations,
   clusters,
   operators,
+  tenantDetails,
 };
 
 export const currentOperator: Operator = operators[0];
