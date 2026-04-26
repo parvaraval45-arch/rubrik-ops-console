@@ -1,5 +1,7 @@
 import { faker } from "@faker-js/faker";
 import type {
+  AccessRequest,
+  AffectedResource,
   Alarm,
   AlarmCategory,
   Alert,
@@ -8,12 +10,19 @@ import type {
   BackupJob,
   Cluster,
   CompletedOnboarding,
+  ComplianceFrameworkPosture,
   DetailedAuditEvent,
+  FrameworkCitation,
   Industry,
   Invoice,
   InvoiceLineItem,
+  IsolationCell,
+  IsolationCellStatus,
+  IsolationCellViolation,
   IsolationCheck,
   IsolationCheckId,
+  IsolationControlDef,
+  IsolationControlId,
   IsolationStatus,
   IsolationViolation,
   JobLogLevel,
@@ -24,6 +33,7 @@ import type {
   MonthlyConsumption,
   OnboardingDraft,
   Operator,
+  OperatorAccessRow,
   Policy,
   PolicyAssignment,
   PolicyAssignmentEvent,
@@ -31,11 +41,16 @@ import type {
   PolicyOverride,
   PolicyVersion,
   QuotaUsage,
+  RbacRoleSummary,
   Region,
+  RemediationStepDef,
   ResellerEntity,
   RestorePoint,
+  SecurityScheduleEntry,
   Tenant,
   TenantStatus,
+  ThreatDetection,
+  ThreatDetectionType,
   ThreatEvent,
   ThreatEventStatus,
   Tier,
@@ -1305,6 +1320,706 @@ for (const t of tenants) {
   };
 }
 
+// ── Security & isolation surface ─────────────────────────────────────────────
+
+export const ISOLATION_CONTROLS: IsolationControlDef[] = [
+  { id: "network", label: "Network", description: "Tenant traffic must not be reachable from outside its namespace." },
+  { id: "storage", label: "Storage", description: "Backups land on a tenant-scoped storage pool with dedicated keys." },
+  { id: "iam", label: "IAM", description: "No principal can act across tenants without explicit elevation." },
+  { id: "encryption", label: "Encryption Key", description: "Tenant data is encrypted with a key never used by any other tenant." },
+  { id: "namespace", label: "Namespace", description: "Tenant resources live in a fully scoped logical namespace." },
+];
+
+const SECURITY_NOW = Date.parse("2026-04-25T18:00:00Z");
+
+interface CellSeed {
+  tenant: string;
+  control: IsolationControlId;
+  status: IsolationCellStatus;
+}
+
+const SEEDED_CELLS: CellSeed[] = [
+  { tenant: "Crawford & Associates LLP", control: "storage", status: "fail" },
+  { tenant: "Crawford & Associates LLP", control: "iam", status: "fail" },
+  { tenant: "Pacific Coast Medical Center", control: "storage", status: "fail" },
+  { tenant: "Summit Financial Group", control: "network", status: "fail" },
+  { tenant: "Summit Financial Group", control: "encryption", status: "fail" },
+  { tenant: "Lakewood Community Health", control: "network", status: "fail" },
+  { tenant: "Lakewood Community Health", control: "storage", status: "warn" },
+  { tenant: "Sterling Aerospace", control: "storage", status: "warn" },
+  { tenant: "Sterling Aerospace", control: "iam", status: "warn" },
+  { tenant: "Meridian Pharmaceuticals", control: "network", status: "warn" },
+  { tenant: "Meridian Pharmaceuticals", control: "namespace", status: "fail" },
+  { tenant: "Pinnacle Insurance Group", control: "namespace", status: "fail" },
+  { tenant: "Atlas Logistics Corp", control: "iam", status: "warn" },
+  { tenant: "Atlas Logistics Corp", control: "namespace", status: "warn" },
+  { tenant: "Redwood School District", control: "storage", status: "warn" },
+  { tenant: "Cascade Energy Partners", control: "storage", status: "fail" },
+  { tenant: "Cascade Energy Partners", control: "encryption", status: "warn" },
+  { tenant: "Mercy General Hospital", control: "encryption", status: "warn" },
+  { tenant: "Hawthorne Manufacturing", control: "iam", status: "fail" },
+  { tenant: "Vanguard Defense Systems", control: "encryption", status: "fail" },
+  { tenant: "Sapphire Hotels International", control: "encryption", status: "warn" },
+  { tenant: "Quantum Data Sciences", control: "namespace", status: "warn" },
+  { tenant: "Bridgewater Analytics", control: "encryption", status: "warn" },
+  { tenant: "Harborview Medical Group", control: "iam", status: "warn" },
+  { tenant: "Cornerstone Federal Bank", control: "storage", status: "fail" },
+  { tenant: "Cornerstone Federal Bank", control: "encryption", status: "fail" },
+  { tenant: "Beacon Hill Capital Partners", control: "encryption", status: "warn" },
+  { tenant: "Greystone Property Holdings", control: "iam", status: "warn" },
+  { tenant: "Polaris Telecommunications", control: "namespace", status: "warn" },
+  { tenant: "Aurora Biotech", control: "encryption", status: "warn" },
+  { tenant: "Cobalt Semiconductor", control: "encryption", status: "warn" },
+  { tenant: "Stonehaven Legal Partners", control: "iam", status: "fail" },
+  { tenant: "Highland Community College", control: "storage", status: "warn" },
+  { tenant: "Mariner's Trust Bank", control: "encryption", status: "warn" },
+  { tenant: "Maplewood Senior Living", control: "encryption", status: "warn" },
+  { tenant: "Crescent Telehealth", control: "network", status: "fail" },
+  { tenant: "Tidewater Education Trust", control: "encryption", status: "warn" },
+  { tenant: "Halcyon Asset Management", control: "encryption", status: "warn" },
+  { tenant: "Glacier Resort Group", control: "encryption", status: "warn" },
+  { tenant: "Driftwood Hospitality", control: "encryption", status: "warn" },
+  { tenant: "Brightline Logistics", control: "iam", status: "warn" },
+];
+
+function buildViolation(
+  tenantName: string,
+  control: IsolationControlId,
+  status: IsolationCellStatus,
+): IsolationCellViolation | undefined {
+  if (status === "pass") return undefined;
+  const severity: AlertSeverity = status === "fail" ? "critical" : "warning";
+  const evidenceId = `ev-${faker.string.alphanumeric({ length: 6, casing: "lower" })}-20260425`;
+  const firstDetectedAt = new Date(SECURITY_NOW - 26 * 60 * 60_000).toISOString();
+  const blueprints = VIOLATION_BLUEPRINTS[control];
+  const bp = blueprints[status === "fail" ? "fail" : "warn"];
+  return {
+    description: bp.description.replace("{tenant}", tenantName),
+    severity,
+    firstDetectedAt,
+    detectionSource: "Continuous scanning: rsc-isolation-engine v3.2",
+    frameworkCitations: bp.citations,
+    affectedResources: bp.resources(tenantName),
+    blastRadius: bp.blastRadius,
+    customerNotificationTrigger: bp.customerNotificationTrigger,
+    estimatedRemediationLabel: bp.estimatedRemediationLabel,
+    likelihood: bp.likelihood,
+    recommendedAction: bp.recommendedAction,
+    remediationSteps: bp.remediationSteps,
+    evidenceLog: bp.evidenceLog(tenantName, evidenceId),
+    configurationSnapshot: bp.configSnapshot,
+    evidencePackageId: `${evidenceId}.tar.gz`,
+    history: {
+      firstDetectedAt: new Date(SECURITY_NOW - 14 * 24 * 60 * 60_000).toISOString(),
+      failsLast30d: status === "fail" ? 3 : 1,
+      successfulRemediations: status === "fail" ? 2 : 0,
+      lastSuccessfulPassAt: new Date(SECURITY_NOW - 17 * 24 * 60 * 60_000).toISOString(),
+      pattern: "Control consistently fails after policy template updates.",
+    },
+  };
+}
+
+interface ViolationBlueprint {
+  description: string;
+  citations: FrameworkCitation[];
+  resources: (tenant: string) => AffectedResource[];
+  blastRadius: string;
+  customerNotificationTrigger: string;
+  estimatedRemediationLabel: string;
+  likelihood: "Low" | "Medium" | "High";
+  recommendedAction: string;
+  remediationSteps: RemediationStepDef[];
+  evidenceLog: (tenant: string, evidenceId: string) => string;
+  configSnapshot: string;
+}
+
+const STORAGE_REMEDIATION: RemediationStepDef[] = [
+  {
+    id: "isolate",
+    title: "Isolate volume to dedicated pool",
+    description: "Allocates a new storage pool exclusively for the affected tenant.",
+    estimatedDurationLabel: "~4 minutes",
+    completionDurationLabel: "2m 14s",
+    substeps: [
+      "Locking volume…",
+      "Provisioning new storage pool…",
+      "Migrating data to dedicated pool…",
+      "Verifying volume integrity…",
+    ],
+  },
+  {
+    id: "rekey",
+    title: "Re-encrypt with tenant-specific key",
+    description: "Migrates data using a tenant-scoped KMS key.",
+    estimatedDurationLabel: "~3 minutes",
+    completionDurationLabel: "2m 41s",
+    substeps: [
+      "Generating tenant-specific KMS key…",
+      "Re-encrypting restore points…",
+      "Verifying encryption…",
+    ],
+  },
+  {
+    id: "policy",
+    title: "Update access policy and remove cross-tenant references",
+    description: "Removes shared mount points and updates RBAC scope.",
+    estimatedDurationLabel: "~2 minutes",
+    completionDurationLabel: "1m 47s",
+    substeps: [
+      "Removing cross-tenant mount references…",
+      "Updating RBAC scope…",
+      "Locking pool to tenant boundary…",
+    ],
+  },
+  {
+    id: "verify",
+    title: "Verify isolation with re-scan",
+    description: "Runs full storage isolation check on the affected tenant.",
+    estimatedDurationLabel: "~3 minutes",
+    completionDurationLabel: "2m 56s",
+    substeps: [
+      "Running full storage isolation check…",
+      "Validating volume references…",
+      "Checking encryption key scope…",
+      "Confirming pool isolation…",
+    ],
+  },
+  {
+    id: "evidence",
+    title: "Generate compliance evidence",
+    description: "Captures pre/post state for the audit trail.",
+    estimatedDurationLabel: "~1 minute",
+    completionDurationLabel: "1m 40s",
+    substeps: [
+      "Capturing remediation evidence…",
+      "Generating signed evidence package…",
+      "Updating compliance ledger…",
+    ],
+  },
+];
+
+const NETWORK_REMEDIATION: RemediationStepDef[] = [
+  { id: "freeze", title: "Freeze affected network rules", description: "Prevents further traffic on the conflicting rule.", estimatedDurationLabel: "~1 minute", completionDurationLabel: "0m 52s", substeps: ["Locking rule set…", "Draining in-flight connections…", "Confirming freeze…"] },
+  { id: "fix", title: "Replace with isolated rule set", description: "Applies tenant-scoped Envoy config and policy.", estimatedDurationLabel: "~3 minutes", completionDurationLabel: "2m 38s", substeps: ["Generating tenant-scoped Envoy config…", "Applying ingress/egress policies…", "Restarting Envoy…"] },
+  { id: "verify", title: "Verify with synthetic probe", description: "Probes from outside the tenant boundary.", estimatedDurationLabel: "~2 minutes", completionDurationLabel: "1m 49s", substeps: ["Running blackbox probe…", "Validating denial of cross-tenant requests…"] },
+  { id: "evidence", title: "Generate compliance evidence", description: "Signs and stores remediation artifacts.", estimatedDurationLabel: "~1 minute", completionDurationLabel: "0m 58s", substeps: ["Capturing evidence…", "Signing package…", "Updating ledger…"] },
+];
+
+const IAM_REMEDIATION: RemediationStepDef[] = [
+  { id: "audit", title: "Audit principal bindings", description: "Surfaces all cross-tenant role references.", estimatedDurationLabel: "~2 minutes", completionDurationLabel: "1m 22s", substeps: ["Scanning role bindings…", "Identifying cross-tenant scopes…"] },
+  { id: "scope", title: "Re-scope offending roles", description: "Limits roles to the affected tenant only.", estimatedDurationLabel: "~3 minutes", completionDurationLabel: "2m 11s", substeps: ["Updating bindings…", "Removing cross-tenant scopes…", "Recreating service principals…"] },
+  { id: "rotate", title: "Rotate impacted service principals", description: "Forces credential rotation on affected accounts.", estimatedDurationLabel: "~2 minutes", completionDurationLabel: "1m 47s", substeps: ["Generating new credentials…", "Notifying integrations…"] },
+  { id: "verify", title: "Verify with role-bleed scan", description: "Confirms there are no remaining cross-tenant assignments.", estimatedDurationLabel: "~2 minutes", completionDurationLabel: "1m 38s", substeps: ["Running scan…", "Confirming zero cross-tenant bindings…"] },
+  { id: "evidence", title: "Generate compliance evidence", description: "Signs and stores remediation artifacts.", estimatedDurationLabel: "~1 minute", completionDurationLabel: "0m 51s", substeps: ["Capturing evidence…", "Signing package…", "Updating ledger…"] },
+];
+
+const KEY_REMEDIATION: RemediationStepDef[] = [
+  { id: "rotate", title: "Rotate tenant encryption key", description: "Mints a new AES-256 key in the HSM.", estimatedDurationLabel: "~4 minutes", completionDurationLabel: "3m 12s", substeps: ["Generating new key in HSM…", "Re-keying restore points in background…", "Decommissioning old key…"] },
+  { id: "verify", title: "Verify key isolation", description: "Confirms key is unique to the tenant.", estimatedDurationLabel: "~2 minutes", completionDurationLabel: "1m 33s", substeps: ["Probing key references across tenants…", "Validating HSM partition isolation…"] },
+  { id: "evidence", title: "Generate compliance evidence", description: "Signs and stores remediation artifacts.", estimatedDurationLabel: "~1 minute", completionDurationLabel: "0m 47s", substeps: ["Capturing evidence…", "Signing package…", "Updating ledger…"] },
+];
+
+const NAMESPACE_REMEDIATION: RemediationStepDef[] = [
+  { id: "lock", title: "Quarantine namespace", description: "Prevents further mutations on the affected namespace.", estimatedDurationLabel: "~1 minute", completionDurationLabel: "0m 41s", substeps: ["Locking namespace mutations…", "Suspending in-flight workflows…"] },
+  { id: "rebuild", title: "Rebuild namespace metadata", description: "Resolves orphan references and collisions.", estimatedDurationLabel: "~3 minutes", completionDurationLabel: "2m 33s", substeps: ["Resolving orphan references…", "Detaching cross-tenant resources…", "Re-binding metadata…"] },
+  { id: "verify", title: "Verify namespace boundary", description: "Re-runs namespace isolation checks.", estimatedDurationLabel: "~2 minutes", completionDurationLabel: "1m 28s", substeps: ["Running namespace scan…", "Validating boundary integrity…"] },
+  { id: "evidence", title: "Generate compliance evidence", description: "Signs and stores remediation artifacts.", estimatedDurationLabel: "~1 minute", completionDurationLabel: "0m 52s", substeps: ["Capturing evidence…", "Signing package…", "Updating ledger…"] },
+];
+
+const VIOLATION_BLUEPRINTS: Record<
+  IsolationControlId,
+  { fail: ViolationBlueprint; warn: ViolationBlueprint }
+> = {
+  storage: {
+    fail: {
+      description:
+        "Storage volume vol-7a3c2b is shared between {tenant} and another tenant. Cross-tenant data access path detected via shared storage pool reference in repository configuration.",
+      citations: [
+        { framework: "HIPAA", section: "164.312(a)(1)", description: "Access Control violation" },
+        { framework: "SOC 2", section: "CC6.1", description: "Logical access security violation" },
+        { framework: "ISO 27001", section: "A.9.4", description: "System and application access control failure" },
+      ],
+      resources: () => [
+        { id: "vol-7a3c2b", type: "Volume", description: "2.4 TB volume — last cross-tenant access 4 hours ago" },
+        { id: "repo-pool-east-04", type: "Repository Pool", description: "Repository pool containing the shared volume" },
+        { id: "snap-multi-202604240400", type: "Snapshot", description: "Snapshot present in shared scope" },
+        { id: "rp-batch-7a3c2b", type: "Restore Point", description: "8 backup restore points stored on affected volume" },
+      ],
+      blastRadius: "If exploited: data exfiltration risk across 2 tenants.",
+      customerNotificationTrigger: "Yes (within 72 hours per HIPAA Breach Notification Rule).",
+      estimatedRemediationLabel: "12 minutes",
+      likelihood: "Medium",
+      recommendedAction: "Isolate immediately; do not delay for change window.",
+      remediationSteps: STORAGE_REMEDIATION,
+      evidenceLog: (tenant, ev) => `[2026-04-25 14:22:03 UTC] storage-isolation-check started
+[2026-04-25 14:22:03 UTC] tenant=${slugifyName(tenant)} scope=storage_isolation
+[2026-04-25 14:22:04 UTC] checking volume references in repo-pool-east-04
+[2026-04-25 14:22:05 UTC] WARN volume vol-7a3c2b has 2 tenant references
+[2026-04-25 14:22:05 UTC] cross-reference: tenant-mercy-general (last_access=2026-04-25 10:18:42)
+[2026-04-25 14:22:06 UTC] ERROR storage isolation FAIL: shared volume detected
+[2026-04-25 14:22:06 UTC] generating evidence package: ${ev}
+[2026-04-25 14:22:07 UTC] check completed in 4.2s status=FAIL`,
+      configSnapshot: `repo_pool: pool-east-04
+access_scope:
+  - tenant-affected           # expected
+  - tenant-mercy-general      # UNEXPECTED — cross-tenant reference
+volumes:
+  vol-7a3c2b:
+    size_tb: 2.4
+    encryption_key: kms-shared-east-04   # SHOULD BE tenant-specific
+    mount_scope: pool-wide                # SHOULD BE tenant-scoped`,
+    },
+    warn: {
+      description: "Storage volume vol-9c1f4b approaching cross-tenant exposure threshold. Encryption key reuse detected on legacy snapshots.",
+      citations: [
+        { framework: "SOC 2", section: "CC6.7", description: "Data classification handling exception" },
+        { framework: "ISO 27001", section: "A.10.1", description: "Cryptographic controls drift" },
+      ],
+      resources: () => [
+        { id: "vol-9c1f4b", type: "Volume", description: "1.1 TB volume with legacy encryption metadata" },
+        { id: "kms-shared-east-04", type: "KMS Key", description: "Legacy shared key still referenced" },
+      ],
+      blastRadius: "Data classification mismatch but no active cross-tenant access.",
+      customerNotificationTrigger: "No, internal-only review.",
+      estimatedRemediationLabel: "8 minutes",
+      likelihood: "Low",
+      recommendedAction: "Schedule remediation within next change window.",
+      remediationSteps: STORAGE_REMEDIATION,
+      evidenceLog: (tenant, ev) => `[2026-04-25 12:08:12 UTC] storage-isolation-check tenant=${slugifyName(tenant)} status=WARN
+[2026-04-25 12:08:14 UTC] kms-shared-east-04 referenced by 4 legacy restore points
+[2026-04-25 12:08:14 UTC] generating evidence package: ${ev}
+[2026-04-25 12:08:15 UTC] check completed status=WARN`,
+      configSnapshot: `volumes:
+  vol-9c1f4b:
+    encryption_key: kms-shared-east-04    # WARN — legacy shared key
+    mount_scope: tenant-scoped`,
+    },
+  },
+  network: {
+    fail: {
+      description:
+        "Envoy proxy misconfigured for {tenant}. Outbound deny-by-default policy disabled by an automation drift event 18 hours ago.",
+      citations: [
+        { framework: "SOC 2", section: "CC6.6", description: "Boundary defense control failure" },
+        { framework: "PCI-DSS", section: "1.2.1", description: "Restricted inbound/outbound traffic violation" },
+        { framework: "ISO 27001", section: "A.13.1", description: "Network security failure" },
+      ],
+      resources: () => [
+        { id: "envoy-tenant-affected", type: "Network Rule", description: "Envoy proxy configuration" },
+        { id: "rule-egress-default", type: "Network Rule", description: "Outbound deny-by-default rule disabled" },
+      ],
+      blastRadius: "If exploited: lateral movement across the tenant control plane.",
+      customerNotificationTrigger: "No (internal control failure, no customer data exposure).",
+      estimatedRemediationLabel: "8 minutes",
+      likelihood: "Medium",
+      recommendedAction: "Restore Envoy config from baseline immediately.",
+      remediationSteps: NETWORK_REMEDIATION,
+      evidenceLog: (tenant, ev) => `[2026-04-25 09:11:01 UTC] network-isolation-check tenant=${slugifyName(tenant)}
+[2026-04-25 09:11:02 UTC] envoy_proxy.outbound_deny=false  # EXPECTED true
+[2026-04-25 09:11:02 UTC] ERROR network isolation FAIL: deny-by-default disabled
+[2026-04-25 09:11:03 UTC] evidence package: ${ev}`,
+      configSnapshot: `envoy_proxy:
+  enabled: true
+  version: v2.4.7
+outbound_rules:
+  - deny: all_default            # CURRENT: disabled — should be enabled
+  - allow: rsc-repo-east-04`,
+    },
+    warn: {
+      description: "Envoy version v2.4.5 in use; current baseline is v2.4.7. Patch lag exceeds policy.",
+      citations: [
+        { framework: "SOC 2", section: "CC7.1", description: "Patch management exception" },
+      ],
+      resources: () => [
+        { id: "envoy-tenant-affected", type: "Network Rule", description: "Envoy proxy v2.4.5" },
+      ],
+      blastRadius: "Patch lag only — no functional exposure.",
+      customerNotificationTrigger: "No.",
+      estimatedRemediationLabel: "6 minutes",
+      likelihood: "Low",
+      recommendedAction: "Upgrade to v2.4.7 in next maintenance window.",
+      remediationSteps: NETWORK_REMEDIATION,
+      evidenceLog: (tenant, ev) => `[2026-04-25 09:11:01 UTC] network-isolation-check tenant=${slugifyName(tenant)} status=WARN
+[2026-04-25 09:11:01 UTC] envoy_version=v2.4.5 baseline=v2.4.7
+[2026-04-25 09:11:02 UTC] evidence package: ${ev}`,
+      configSnapshot: `envoy_proxy:
+  version: v2.4.5    # WARN — lagging baseline v2.4.7`,
+    },
+  },
+  iam: {
+    fail: {
+      description:
+        "Cross-tenant role binding detected on principal svc-rbk-replicator-east. Principal has scope across {tenant} and one other tenant.",
+      citations: [
+        { framework: "SOC 2", section: "CC6.1", description: "Logical access — separation of duties failure" },
+        { framework: "HIPAA", section: "164.312(a)(2)(i)", description: "Unique user identification violation" },
+        { framework: "ISO 27001", section: "A.9.2", description: "User access management failure" },
+      ],
+      resources: () => [
+        { id: "svc-rbk-replicator-east", type: "IAM Role", description: "Service principal with cross-tenant binding" },
+        { id: "role-replicator-shared", type: "IAM Role", description: "Role with shared scope across tenants" },
+      ],
+      blastRadius: "Compromise of svc account = full read across two tenants.",
+      customerNotificationTrigger: "Conditional (depends on whether principal was used).",
+      estimatedRemediationLabel: "10 minutes",
+      likelihood: "Medium",
+      recommendedAction: "Re-scope role and rotate principal credentials immediately.",
+      remediationSteps: IAM_REMEDIATION,
+      evidenceLog: (tenant, ev) => `[2026-04-25 11:47:22 UTC] iam-isolation-check tenant=${slugifyName(tenant)}
+[2026-04-25 11:47:23 UTC] principal=svc-rbk-replicator-east scope=multi-tenant
+[2026-04-25 11:47:24 UTC] ERROR iam isolation FAIL: cross-tenant binding
+[2026-04-25 11:47:24 UTC] evidence package: ${ev}`,
+      configSnapshot: `principal: svc-rbk-replicator-east
+bindings:
+  - tenant-affected
+  - tenant-other          # UNEXPECTED — must be tenant-affected only`,
+    },
+    warn: {
+      description: "Read-only auditor role assigned >90 days ago without periodic review.",
+      citations: [
+        { framework: "SOC 2", section: "CC6.3", description: "Access review cadence exception" },
+      ],
+      resources: () => [
+        { id: "role-auditor-readonly", type: "IAM Role", description: "Auditor role pending periodic review" },
+      ],
+      blastRadius: "Stale role assignment, low risk.",
+      customerNotificationTrigger: "No.",
+      estimatedRemediationLabel: "5 minutes",
+      likelihood: "Low",
+      recommendedAction: "Re-attest the role assignment.",
+      remediationSteps: IAM_REMEDIATION,
+      evidenceLog: (tenant, ev) => `[2026-04-25 11:47:22 UTC] iam-review tenant=${slugifyName(tenant)} status=WARN
+[2026-04-25 11:47:23 UTC] role-auditor-readonly age_days=104  # WARN — review threshold 90
+[2026-04-25 11:47:24 UTC] evidence package: ${ev}`,
+      configSnapshot: `role: auditor-readonly
+last_reviewed: 2026-01-12
+review_threshold_days: 90`,
+    },
+  },
+  encryption: {
+    fail: {
+      description:
+        "Tenant encryption key kms-key-{slug} is overdue for rotation by 14 days. Compliance requires 90-day rotation.",
+      citations: [
+        { framework: "SOC 2", section: "CC6.7", description: "Cryptographic controls failure" },
+        { framework: "PCI-DSS", section: "3.6.4", description: "Cryptographic key changes failure" },
+        { framework: "HIPAA", section: "164.312(e)(2)(ii)", description: "Encryption integrity exception" },
+      ],
+      resources: () => [
+        { id: "kms-key-affected", type: "KMS Key", description: "Tenant-scoped key overdue for rotation" },
+      ],
+      blastRadius: "Compliance failure but no active data exposure.",
+      customerNotificationTrigger: "No.",
+      estimatedRemediationLabel: "7 minutes",
+      likelihood: "Low",
+      recommendedAction: "Rotate key immediately to return to compliance.",
+      remediationSteps: KEY_REMEDIATION,
+      evidenceLog: (tenant, ev) => `[2026-04-25 04:00:00 UTC] key-rotation-check tenant=${slugifyName(tenant)}
+[2026-04-25 04:00:01 UTC] kms-key-affected age_days=104  # threshold 90
+[2026-04-25 04:00:02 UTC] ERROR encryption FAIL: rotation overdue
+[2026-04-25 04:00:02 UTC] evidence package: ${ev}`,
+      configSnapshot: `key_id: kms-key-affected
+algorithm: AES-256-GCM
+last_rotated: 2026-01-12
+rotation_threshold_days: 90`,
+    },
+    warn: {
+      description: "Encryption key rotation due in 7 days.",
+      citations: [{ framework: "SOC 2", section: "CC6.7", description: "Approaching rotation threshold" }],
+      resources: () => [{ id: "kms-key-affected", type: "KMS Key", description: "Key approaching rotation" }],
+      blastRadius: "None yet, advisory only.",
+      customerNotificationTrigger: "No.",
+      estimatedRemediationLabel: "7 minutes",
+      likelihood: "Low",
+      recommendedAction: "Schedule rotation within the next 7 days.",
+      remediationSteps: KEY_REMEDIATION,
+      evidenceLog: (tenant, ev) => `[2026-04-25 04:00:00 UTC] key-rotation-check tenant=${slugifyName(tenant)} status=WARN
+[2026-04-25 04:00:01 UTC] kms-key-affected age_days=83  # threshold 90 in 7 days
+[2026-04-25 04:00:02 UTC] evidence package: ${ev}`,
+      configSnapshot: `key_id: kms-key-affected
+last_rotated: 2026-02-01
+rotation_threshold_days: 90`,
+    },
+  },
+  namespace: {
+    fail: {
+      description:
+        "Orphaned namespace tenant-{slug}-legacy detected with active resource bindings. Namespace collision in lookup table.",
+      citations: [
+        { framework: "SOC 2", section: "CC6.1", description: "Resource isolation failure" },
+        { framework: "ISO 27001", section: "A.13.1", description: "Network segregation failure" },
+      ],
+      resources: () => [
+        { id: "ns-legacy-orphan", type: "Namespace", description: "Orphaned namespace with bindings" },
+      ],
+      blastRadius: "Cross-tenant lookup ambiguity.",
+      customerNotificationTrigger: "No.",
+      estimatedRemediationLabel: "9 minutes",
+      likelihood: "Medium",
+      recommendedAction: "Quarantine and rebuild namespace metadata.",
+      remediationSteps: NAMESPACE_REMEDIATION,
+      evidenceLog: (tenant, ev) => `[2026-04-25 02:14:08 UTC] namespace-isolation-check tenant=${slugifyName(tenant)}
+[2026-04-25 02:14:09 UTC] WARN orphaned namespace detected: tenant-${slugifyName(tenant)}-legacy
+[2026-04-25 02:14:10 UTC] ERROR namespace isolation FAIL: collision in lookup table
+[2026-04-25 02:14:10 UTC] evidence package: ${ev}`,
+      configSnapshot: `namespace: tenant-affected
+status: collision
+collision_with: tenant-affected-legacy   # ORPHANED — must be removed`,
+    },
+    warn: {
+      description: "Namespace label drift detected. Some resources still reference deprecated label.",
+      citations: [{ framework: "SOC 2", section: "CC6.1", description: "Metadata drift advisory" }],
+      resources: () => [{ id: "ns-tenant-affected", type: "Namespace", description: "Namespace label drift" }],
+      blastRadius: "Metadata only.",
+      customerNotificationTrigger: "No.",
+      estimatedRemediationLabel: "5 minutes",
+      likelihood: "Low",
+      recommendedAction: "Re-label resources via background sweep.",
+      remediationSteps: NAMESPACE_REMEDIATION,
+      evidenceLog: (tenant, ev) => `[2026-04-25 02:14:08 UTC] namespace-check tenant=${slugifyName(tenant)} status=WARN
+[2026-04-25 02:14:09 UTC] label_drift_count=3
+[2026-04-25 02:14:10 UTC] evidence package: ${ev}`,
+      configSnapshot: `namespace: tenant-affected
+labels:
+  - tenant-affected      # ok
+  - tenant-affected-old  # WARN — deprecated label`,
+    },
+  },
+};
+
+function slugifyName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function generateMatrixCells(): IsolationCell[] {
+  const cells: IsolationCell[] = [];
+  for (const tenant of tenants) {
+    for (const control of ISOLATION_CONTROLS) {
+      const seed = SEEDED_CELLS.find(
+        (s) => s.tenant === tenant.name && s.control === control.id,
+      );
+      const status: IsolationCellStatus = seed?.status ?? "pass";
+      const lastEvalMin = faker.number.int({ min: 30, max: 60 * 6 });
+      cells.push({
+        tenantId: tenant.id,
+        controlId: control.id,
+        status,
+        lastEvaluatedAt: new Date(SECURITY_NOW - lastEvalMin * 60_000).toISOString(),
+        evidence:
+          status === "pass"
+            ? `Last verification confirmed ${control.label} isolation across all bindings.`
+            : `Issue detected during ${control.label} isolation sweep.`,
+        violation: buildViolation(tenant.name, control.id, status),
+      });
+    }
+  }
+  return cells;
+}
+
+const matrixCells = generateMatrixCells();
+
+const THREAT_TEMPLATES: Array<{
+  type: ThreatDetectionType;
+  severity: AlertSeverity;
+  detail: string;
+}> = [
+  { type: "Unusual Access Pattern", severity: "info", detail: "Login pattern from new geo for operator priya.sharma. Verified via MFA + ticket." },
+  { type: "Mass Deletion", severity: "critical", detail: "12,400 file deletions detected on /finance-share within a 9 minute window. Recovery isolation engaged." },
+  { type: "Ransomware Signature", severity: "critical", detail: "Encrypted-file entropy spike across /research-share. Hash match against known TTPs." },
+  { type: "Anomalous Encryption", severity: "warning", detail: "Sudden encryption volume on archive volume. Confirmed scheduled migration." },
+  { type: "Data Exfiltration Pattern", severity: "warning", detail: "Outbound transfer 4.2x baseline triggered review. Awaiting customer confirmation." },
+  { type: "Privilege Escalation Attempt", severity: "info", detail: "Tenant admin role assigned via approved change ticket CHG-4128." },
+];
+
+const THREAT_NARRATIVE = [
+  { tenantName: "Bay Area Transit Authority", type: "Mass Deletion" as ThreatDetectionType, severity: "critical" as AlertSeverity, status: "Contained" as ThreatEventStatus, analyst: "Marcus Chen", detail: "12,400 file deletions detected on /transit-ops-share within a 9 minute window. Recovery isolation engaged." },
+  { tenantName: "Oakmont Wealth Advisors", type: "Ransomware Signature" as ThreatDetectionType, severity: "critical" as AlertSeverity, status: "Investigating" as ThreatEventStatus, analyst: "Priya Patel", detail: "Encrypted-file entropy spike with TTP hash match. Snapshot 0418-0400 confirmed clean." },
+  { tenantName: "Atlas Logistics Corp", type: "Mass Deletion" as ThreatDetectionType, severity: "critical" as AlertSeverity, status: "Investigating" as ThreatEventStatus, analyst: "Marcus Chen", detail: "8,200 file deletions on /shipping-historical. Investigating tenant intent." },
+  { tenantName: "Vanguard Defense Systems", type: "Privilege Escalation Attempt" as ThreatDetectionType, severity: "info" as AlertSeverity, status: "Resolved" as ThreatEventStatus, analyst: "Sofia Reyes", detail: "Service principal escalated to admin via approved ticket CHG-4128." },
+  { tenantName: "Crawford & Associates LLP", type: "Unusual Access Pattern" as ThreatDetectionType, severity: "info" as AlertSeverity, status: "Resolved" as ThreatEventStatus, analyst: "Sofia Reyes", detail: "Login from a new geo for jcrawford@crawfordlegal.com. MFA verified." },
+  { tenantName: "Mercy General Hospital", type: "Data Exfiltration Pattern" as ThreatDetectionType, severity: "warning" as AlertSeverity, status: "Investigating" as ThreatEventStatus, analyst: "Daniel Okafor", detail: "Outbound transfer 4.1x baseline. Awaiting tenant confirmation of clinical export." },
+  { tenantName: "Quantum Data Sciences", type: "Anomalous Encryption" as ThreatDetectionType, severity: "warning" as AlertSeverity, status: "Contained" as ThreatEventStatus, analyst: "Priya Patel", detail: "Encryption volume spike on /research-share matched scheduled archive migration." },
+  { tenantName: "Sunrise Senior Care", type: "Unusual Access Pattern" as ThreatDetectionType, severity: "info" as AlertSeverity, status: "Resolved" as ThreatEventStatus, analyst: "Sofia Reyes", detail: "Operator action outside business hours. Verified via on-call rotation." },
+];
+
+function generateThreatDetections(): ThreatDetection[] {
+  const out: ThreatDetection[] = [];
+  THREAT_NARRATIVE.forEach((n, i) => {
+    const tenant = tenants.find((t) => t.name === n.tenantName);
+    if (!tenant) return;
+    const detectedAt = new Date(SECURITY_NOW - (i + 1) * 90 * 60_000).toISOString();
+    out.push({
+      id: `thr_${i}`,
+      tenantId: tenant.id,
+      detectionType: n.type,
+      severity: n.severity,
+      status: n.status,
+      detectedAt,
+      analyst: n.analyst,
+      detail: n.detail,
+      history: [
+        {
+          at: detectedAt,
+          by: "rsc-threat-engine",
+          from: null,
+          to: "Investigating",
+          note: "Detection triggered by continuous scanning.",
+        },
+        ...(n.status !== "Investigating"
+          ? [
+              {
+                at: new Date(Date.parse(detectedAt) + 25 * 60_000).toISOString(),
+                by: n.analyst,
+                from: "Investigating" as ThreatEventStatus,
+                to: n.status,
+                note:
+                  n.status === "Contained"
+                    ? "Recovery isolation engaged; affected workloads quarantined."
+                    : n.status === "Resolved"
+                      ? "Confirmed benign by tenant; closing detection."
+                      : "False positive after cross-checking with change tickets.",
+              },
+            ]
+          : []),
+      ],
+    });
+  });
+  // Pad with shorter info-level entries
+  for (let i = THREAT_NARRATIVE.length; i < 25; i += 1) {
+    const tenant = faker.helpers.arrayElement(tenants);
+    const tpl = faker.helpers.arrayElement(THREAT_TEMPLATES.filter((t) => t.severity === "info"));
+    const detectedAt = new Date(SECURITY_NOW - i * 35 * 60_000).toISOString();
+    out.push({
+      id: `thr_${i}`,
+      tenantId: tenant.id,
+      detectionType: tpl.type,
+      severity: "info",
+      status: "Resolved",
+      detectedAt,
+      analyst: faker.helpers.arrayElement(operators).name,
+      detail: tpl.detail,
+      history: [
+        { at: detectedAt, by: "rsc-threat-engine", from: null, to: "Investigating", note: "Detection triggered by continuous scanning." },
+        { at: new Date(Date.parse(detectedAt) + 12 * 60_000).toISOString(), by: faker.helpers.arrayElement(operators).name, from: "Investigating", to: "Resolved", note: "Confirmed benign." },
+      ],
+    });
+  }
+  return out;
+}
+
+const securityThreats = generateThreatDetections();
+
+const rbacRoles: RbacRoleSummary[] = [
+  { id: "msp_admin", name: "MSP Admin", userCount: 3, scope: "All tenants · All operations" },
+  { id: "backup_operator", name: "Backup Operator", userCount: 8, scope: "Assigned tenants · Backup/Restore" },
+  { id: "readonly_auditor", name: "Read-Only Auditor", userCount: 5, scope: "All tenants · Read only" },
+  { id: "compliance_auditor", name: "Compliance Auditor", userCount: 2, scope: "Reports · Audit logs" },
+  { id: "billing_manager", name: "Billing Manager", userCount: 2, scope: "Billing data · Invoices" },
+];
+
+const operatorAccess: OperatorAccessRow[] = [
+  { operatorId: "op_1", operatorName: "Alex Morrison", initials: "AM", tenantsAssigned: 18, role: "Admin", mfaEnforced: true },
+  { operatorId: "op_2", operatorName: "Priya Patel", initials: "PP", tenantsAssigned: 12, role: "Operator", mfaEnforced: true },
+  { operatorId: "op_3", operatorName: "Marcus Chen", initials: "MC", tenantsAssigned: 9, role: "Operator", mfaEnforced: true },
+  { operatorId: "op_4", operatorName: "Sofia Reyes", initials: "SR", tenantsAssigned: 15, role: "Auditor", mfaEnforced: true },
+  { operatorId: "op_5", operatorName: "Daniel Okafor", initials: "DO", tenantsAssigned: 7, role: "Operator", mfaEnforced: true },
+];
+
+const accessRequests: AccessRequest[] = [
+  {
+    id: "req_1",
+    requesterName: "Casey Park",
+    requesterInitials: "CP",
+    requestedRole: "Backup Operator",
+    scope: "Mercy General Hospital",
+    requestedAt: new Date(SECURITY_NOW - 4 * 60 * 60_000).toISOString(),
+    justification: "Joining the healthcare delivery pod, need backup/restore on Mercy clinical workloads. Approved by Lisa Chen (manager).",
+    status: "pending",
+  },
+  {
+    id: "req_2",
+    requesterName: "Jordan Reilly",
+    requesterInitials: "JR",
+    requestedRole: "Compliance Auditor",
+    scope: "All tenants · Read only",
+    requestedAt: new Date(SECURITY_NOW - 7 * 60 * 60_000).toISOString(),
+    justification: "Quarterly SOC 2 audit prep. Requires read access to audit logs for all tenants for the next 30 days.",
+    status: "pending",
+  },
+  {
+    id: "req_3",
+    requesterName: "Mira Okonkwo",
+    requesterInitials: "MO",
+    requestedRole: "Read-Only Auditor",
+    scope: "Financial-tier tenants",
+    requestedAt: new Date(SECURITY_NOW - 22 * 60 * 60_000).toISOString(),
+    justification: "Internal audit covering financial-tier tenants for HIPAA and SOX compliance evidence collection.",
+    status: "pending",
+  },
+];
+
+const COMPLIANCE_DEFAULTS: Array<{ framework: string; full: string }> = [
+  { framework: "HIPAA", full: "Health Insurance Portability and Accountability Act" },
+  { framework: "SOC 2", full: "SOC 2 Type II Trust Services Criteria" },
+  { framework: "ISO 27001", full: "ISO/IEC 27001:2022 Information Security" },
+  { framework: "PCI-DSS", full: "Payment Card Industry Data Security Standard v4.0" },
+  { framework: "GDPR", full: "General Data Protection Regulation" },
+];
+
+function generateCompliancePosture(): ComplianceFrameworkPosture[] {
+  const findingsCells = matrixCells.filter((c) => c.status !== "pass");
+  return COMPLIANCE_DEFAULTS.map((f) => {
+    const total = tenants.length;
+    const compliant =
+      f.framework === "HIPAA"
+        ? 56
+        : f.framework === "SOC 2"
+          ? 58
+          : f.framework === "ISO 27001"
+            ? 53
+            : f.framework === "PCI-DSS"
+              ? 47
+              : 60;
+    const findingsByTenant: Record<string, string[]> = {};
+    findingsCells.slice(0, 14).forEach((c) => {
+      const tenant = tenants.find((t) => t.id === c.tenantId);
+      if (!tenant) return;
+      const citations = c.violation?.frameworkCitations.filter((cit) => cit.framework.startsWith(f.framework));
+      if (!citations || citations.length === 0) return;
+      if (!findingsByTenant[tenant.id]) findingsByTenant[tenant.id] = [];
+      citations.forEach((cit) => {
+        findingsByTenant[tenant.id].push(`${cit.framework} ${cit.section} — ${cit.description}`);
+      });
+    });
+    const findings = Object.entries(findingsByTenant).map(([tenantId, items]) => {
+      const tenant = tenants.find((t) => t.id === tenantId);
+      return { tenantId, tenantName: tenant?.name ?? tenantId, findings: items };
+    });
+    return {
+      framework: f.framework,
+      fullLabel: f.full,
+      compliancePct: Math.round((compliant / total) * 1000) / 10,
+      compliantCount: compliant,
+      totalCount: total,
+      findings,
+    };
+  });
+}
+
+const compliancePosture = generateCompliancePosture();
+
+const securitySchedule: SecurityScheduleEntry[] = [
+  { controlId: "network", label: "Network", frequencyHours: 4, lastRunAt: new Date(SECURITY_NOW - 2.5 * 60 * 60_000).toISOString(), nextRunAt: new Date(SECURITY_NOW + 1.5 * 60 * 60_000).toISOString() },
+  { controlId: "storage", label: "Storage", frequencyHours: 6, lastRunAt: new Date(SECURITY_NOW - 4 * 60 * 60_000).toISOString(), nextRunAt: new Date(SECURITY_NOW + 2 * 60 * 60_000).toISOString() },
+  { controlId: "iam", label: "IAM", frequencyHours: 4, lastRunAt: new Date(SECURITY_NOW - 0.5 * 60 * 60_000).toISOString(), nextRunAt: new Date(SECURITY_NOW + 3.5 * 60 * 60_000).toISOString() },
+  { controlId: "encryption", label: "Encryption Key", frequencyHours: 24, lastRunAt: new Date(SECURITY_NOW - 14 * 60 * 60_000).toISOString(), nextRunAt: new Date(SECURITY_NOW + 6 * 60 * 60_000).toISOString() },
+  { controlId: "namespace", label: "Namespace", frequencyHours: 12, lastRunAt: new Date(SECURITY_NOW - 6 * 60 * 60_000).toISOString(), nextRunAt: new Date(SECURITY_NOW + 6 * 60 * 60_000).toISOString() },
+  { controlId: "full-sweep", label: "Full Sweep", frequencyHours: 24, lastRunAt: new Date(SECURITY_NOW - 4 * 60 * 60_000).toISOString(), nextRunAt: new Date(SECURITY_NOW + 18 * 60 * 60_000).toISOString() },
+];
+
 export const mockData = {
   tenants,
   policies,
@@ -1321,6 +2036,13 @@ export const mockData = {
   drafts: seedDrafts,
   validationWindow: seedValidationWindow,
   completedOnboardings: seedCompleted,
+  matrixCells,
+  securityThreats,
+  rbacRoles,
+  operatorAccess,
+  accessRequests,
+  compliancePosture,
+  securitySchedule,
 };
 
 export const currentOperator: Operator = operators[0];

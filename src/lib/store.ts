@@ -3,27 +3,40 @@
 import { create } from "zustand";
 import { mockData } from "./mock-data";
 import type {
+  AccessRequest,
+  AccessRequestStatus,
   Alarm,
   AlarmState,
   Alert,
+  AttestationReport,
   AuditEvent,
   CompletedOnboarding,
+  ComplianceFrameworkPosture,
   DetailedAuditEvent,
+  IsolationCell,
+  IsolationCellStatus,
   IsolationCheck,
   IsolationCheckId,
+  IsolationControlId,
   JobLogLine,
   JobSession,
   KeyRotationStatus,
   MonthlyConsumption,
   OnboardingDraft,
+  OperatorAccessRow,
   Policy,
   PolicyAssignment,
   PolicyOverride,
   PolicyVersion,
   QuotaUsage,
+  RbacRoleSummary,
   RestorePoint,
+  SecurityBannerState,
+  SecurityScheduleEntry,
   Tenant,
+  ThreatDetection,
   ThreatEvent,
+  ThreatEventStatus,
   ValidationWindowEntry,
   Workload,
   BackupJobStatus,
@@ -88,6 +101,15 @@ interface ConsoleState extends PerTenantState {
   validationWindow: ValidationWindowEntry[];
   completedOnboardings: CompletedOnboarding[];
   avgOnboardingSeconds: number;
+  matrixCells: IsolationCell[];
+  securityThreats: ThreatDetection[];
+  rbacRoles: RbacRoleSummary[];
+  operatorAccess: OperatorAccessRow[];
+  accessRequests: AccessRequest[];
+  compliancePosture: ComplianceFrameworkPosture[];
+  securitySchedule: SecurityScheduleEntry[];
+  securityBanner: SecurityBannerState;
+  attestationReports: AttestationReport[];
   sidebarCollapsed: boolean;
   commandPaletteOpen: boolean;
   density: "comfortable" | "compact";
@@ -148,6 +170,55 @@ interface ConsoleState extends PerTenantState {
 
   recordDetailedAudit: (tenantId: string, event: DetailedAuditEvent) => void;
 
+  // ── Security & isolation surface ─────────────────────────────────────────
+  acknowledgeSecurityBanner: (
+    operatorName: string,
+    note: string,
+    estimatedResolution: string,
+  ) => void;
+  setMatrixCellStatus: (
+    tenantId: string,
+    controlId: IsolationControlId,
+    status: IsolationCellStatus,
+  ) => void;
+  remediateMatrixCell: (
+    tenantId: string,
+    controlId: IsolationControlId,
+    operatorName: string,
+    note: string,
+  ) => void;
+  markCellFalsePositive: (
+    tenantId: string,
+    controlId: IsolationControlId,
+    operatorName: string,
+    reason: string,
+  ) => void;
+  snoozeCell: (
+    tenantId: string,
+    controlId: IsolationControlId,
+    operatorName: string,
+    reason: string,
+  ) => void;
+  rerunPostureSweep: () => void;
+  rerunControlSweep: (controlId: IsolationControlId) => void;
+  updateThreatStatus: (
+    threatId: string,
+    nextStatus: ThreatEventStatus,
+    operatorName: string,
+    note: string,
+  ) => void;
+  resolveAccessRequest: (
+    requestId: string,
+    decision: "approved" | "denied",
+    operatorName: string,
+    note: string,
+  ) => void;
+  recordAttestationReport: (report: AttestationReport) => void;
+  updateScheduleEntry: (
+    controlId: IsolationControlId | "full-sweep",
+    frequencyHours: number,
+  ) => void;
+
   // ── Onboarding lifecycle ──────────────────────────────────────────────────
   createDraft: (operatorName: string) => string;
   upsertDraft: (draft: OnboardingDraft) => void;
@@ -179,6 +250,15 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
   validationWindow: mockData.validationWindow,
   completedOnboardings: mockData.completedOnboardings,
   avgOnboardingSeconds: 18 * 60 + 42,
+  matrixCells: mockData.matrixCells,
+  securityThreats: mockData.securityThreats,
+  rbacRoles: mockData.rbacRoles,
+  operatorAccess: mockData.operatorAccess,
+  accessRequests: mockData.accessRequests,
+  compliancePosture: mockData.compliancePosture,
+  securitySchedule: mockData.securitySchedule,
+  securityBanner: { acknowledged: false } as SecurityBannerState,
+  attestationReports: [] as AttestationReport[],
   sidebarCollapsed: false,
   commandPaletteOpen: false,
   density: "comfortable",
@@ -965,6 +1045,289 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     set((s) => ({
       validationWindow: s.validationWindow.filter(
         (v) => v.tenantId !== tenantId,
+      ),
+    })),
+
+  // ── Security & isolation workflows ────────────────────────────────────────
+  acknowledgeSecurityBanner: (operatorName, note, estimatedResolution) =>
+    set((s) => {
+      const now = new Date().toISOString();
+      const event: AuditEvent = {
+        id: makeAuditId("audit"),
+        actor: operatorName,
+        actorRole: "MSP Admin",
+        action: "isolation.banner.acknowledge",
+        target: "global isolation banner",
+        outcome: "success",
+        occurredAt: now,
+        ipAddress: "10.0.4.127",
+      };
+      return {
+        securityBanner: {
+          acknowledged: true,
+          acknowledgedBy: operatorName,
+          acknowledgedAt: now,
+          acknowledgmentNote: note,
+          estimatedResolution,
+        },
+        matrixCells: s.matrixCells.map((c) =>
+          c.status === "fail" || c.status === "warn"
+            ? { ...c, acknowledged: true }
+            : c,
+        ),
+        auditEvents: [event, ...s.auditEvents],
+      };
+    }),
+
+  setMatrixCellStatus: (tenantId, controlId, status) =>
+    set((s) => ({
+      matrixCells: s.matrixCells.map((c) =>
+        c.tenantId === tenantId && c.controlId === controlId
+          ? { ...c, status, lastEvaluatedAt: new Date().toISOString() }
+          : c,
+      ),
+    })),
+
+  remediateMatrixCell: (tenantId, controlId, operatorName, note) =>
+    set((s) => {
+      const tenant = s.tenants.find((t) => t.id === tenantId);
+      const now = new Date().toISOString();
+      const event: DetailedAuditEvent = {
+        id: makeAuditId("audit"),
+        actor: operatorName,
+        actorRole: "MSP Admin",
+        action: "isolation.remediate",
+        target: tenant?.name ?? tenantId,
+        tenantId,
+        outcome: "success",
+        occurredAt: now,
+        ipAddress: "10.0.4.127",
+        sessionId: `sess_${Math.random().toString(36).slice(2, 10)}`,
+        userAgent: "Mozilla/5.0",
+        geo: "San Francisco, CA, US",
+        description: `Remediation executed: ${controlId} isolation. Note: ${note}`,
+      };
+      const tenantBumpedScore = tenant
+        ? { ...tenant, securityScore: Math.min(99, tenant.securityScore + 12) }
+        : null;
+      return {
+        matrixCells: s.matrixCells.map((c) =>
+          c.tenantId === tenantId && c.controlId === controlId
+            ? {
+                ...c,
+                status: "pass",
+                lastEvaluatedAt: now,
+                acknowledged: false,
+                violation: undefined,
+                evidence: `Remediated by ${operatorName}. Re-scan confirmed pass.`,
+              }
+            : c,
+        ),
+        tenants: tenantBumpedScore
+          ? s.tenants.map((t) => (t.id === tenantId ? tenantBumpedScore : t))
+          : s.tenants,
+        detailedAudit: {
+          ...s.detailedAudit,
+          [tenantId]: [event, ...(s.detailedAudit[tenantId] ?? [])],
+        },
+        auditEvents: [
+          {
+            id: event.id,
+            actor: event.actor,
+            actorRole: event.actorRole,
+            action: event.action,
+            target: event.target,
+            tenantId,
+            outcome: event.outcome,
+            occurredAt: event.occurredAt,
+            ipAddress: event.ipAddress,
+          },
+          ...s.auditEvents,
+        ],
+      };
+    }),
+
+  markCellFalsePositive: (tenantId, controlId, operatorName, reason) =>
+    set((s) => {
+      const event: AuditEvent = {
+        id: makeAuditId("audit"),
+        actor: operatorName,
+        actorRole: "MSP Admin",
+        action: "isolation.false_positive",
+        target: `${tenantId}/${controlId}`,
+        tenantId,
+        outcome: "success",
+        occurredAt: new Date().toISOString(),
+        ipAddress: "10.0.4.127",
+      };
+      return {
+        matrixCells: s.matrixCells.map((c) =>
+          c.tenantId === tenantId && c.controlId === controlId
+            ? {
+                ...c,
+                status: "pass",
+                violation: undefined,
+                evidence: `Marked false positive: ${reason}`,
+                lastEvaluatedAt: new Date().toISOString(),
+              }
+            : c,
+        ),
+        auditEvents: [event, ...s.auditEvents],
+      };
+    }),
+
+  snoozeCell: (tenantId, controlId, operatorName, reason) =>
+    set((s) => {
+      const event: AuditEvent = {
+        id: makeAuditId("audit"),
+        actor: operatorName,
+        actorRole: "MSP Admin",
+        action: "isolation.snooze",
+        target: `${tenantId}/${controlId}`,
+        tenantId,
+        outcome: "success",
+        occurredAt: new Date().toISOString(),
+        ipAddress: "10.0.4.127",
+      };
+      void reason;
+      return { auditEvents: [event, ...s.auditEvents] };
+    }),
+
+  rerunPostureSweep: () =>
+    set((s) => {
+      const now = new Date().toISOString();
+      return {
+        matrixCells: s.matrixCells.map((c) => ({ ...c, lastEvaluatedAt: now })),
+        securitySchedule: s.securitySchedule.map((entry) => ({
+          ...entry,
+          lastRunAt: now,
+          nextRunAt: new Date(
+            Date.now() + entry.frequencyHours * 60 * 60_000,
+          ).toISOString(),
+        })),
+      };
+    }),
+
+  rerunControlSweep: (controlId) =>
+    set((s) => {
+      const now = new Date().toISOString();
+      return {
+        matrixCells: s.matrixCells.map((c) =>
+          c.controlId === controlId ? { ...c, lastEvaluatedAt: now } : c,
+        ),
+        securitySchedule: s.securitySchedule.map((entry) =>
+          entry.controlId === controlId
+            ? {
+                ...entry,
+                lastRunAt: now,
+                nextRunAt: new Date(
+                  Date.now() + entry.frequencyHours * 60 * 60_000,
+                ).toISOString(),
+              }
+            : entry,
+        ),
+      };
+    }),
+
+  updateThreatStatus: (threatId, nextStatus, operatorName, note) =>
+    set((s) => {
+      const target = s.securityThreats.find((t) => t.id === threatId);
+      if (!target) return {};
+      const updated: ThreatDetection = {
+        ...target,
+        status: nextStatus,
+        history: [
+          ...target.history,
+          {
+            at: new Date().toISOString(),
+            by: operatorName,
+            from: target.status,
+            to: nextStatus,
+            note,
+          },
+        ],
+      };
+      const event: AuditEvent = {
+        id: makeAuditId("audit"),
+        actor: operatorName,
+        actorRole: "MSP Admin",
+        action: "threat.status",
+        target: target.detectionType,
+        tenantId: target.tenantId,
+        outcome: "success",
+        occurredAt: new Date().toISOString(),
+        ipAddress: "10.0.4.127",
+      };
+      return {
+        securityThreats: s.securityThreats.map((t) =>
+          t.id === threatId ? updated : t,
+        ),
+        auditEvents: [event, ...s.auditEvents],
+      };
+    }),
+
+  resolveAccessRequest: (requestId, decision, operatorName, note) =>
+    set((s) => {
+      const target = s.accessRequests.find((r) => r.id === requestId);
+      if (!target) return {};
+      const status: AccessRequestStatus = decision;
+      const now = new Date().toISOString();
+      const event: AuditEvent = {
+        id: makeAuditId("audit"),
+        actor: operatorName,
+        actorRole: "MSP Admin",
+        action: `access.${decision}`,
+        target: `${target.requesterName} → ${target.requestedRole}`,
+        outcome: "success",
+        occurredAt: now,
+        ipAddress: "10.0.4.127",
+      };
+      return {
+        accessRequests: s.accessRequests.map((r) =>
+          r.id === requestId
+            ? {
+                ...r,
+                status,
+                resolvedAt: now,
+                resolvedBy: operatorName,
+                resolutionNote: note,
+              }
+            : r,
+        ),
+        auditEvents: [event, ...s.auditEvents],
+      };
+    }),
+
+  recordAttestationReport: (report) =>
+    set((s) => {
+      const event: AuditEvent = {
+        id: makeAuditId("audit"),
+        actor: report.generatedBy,
+        actorRole: "MSP Admin",
+        action: "attestation.export",
+        target: report.id,
+        outcome: "success",
+        occurredAt: report.generatedAt,
+        ipAddress: "10.0.4.127",
+      };
+      return {
+        attestationReports: [report, ...s.attestationReports],
+        auditEvents: [event, ...s.auditEvents],
+      };
+    }),
+
+  updateScheduleEntry: (controlId, frequencyHours) =>
+    set((s) => ({
+      securitySchedule: s.securitySchedule.map((entry) =>
+        entry.controlId === controlId
+          ? {
+              ...entry,
+              frequencyHours,
+              nextRunAt: new Date(
+                Date.parse(entry.lastRunAt) + frequencyHours * 60 * 60_000,
+              ).toISOString(),
+            }
+          : entry,
       ),
     })),
 }));

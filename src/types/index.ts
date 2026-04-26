@@ -568,3 +568,173 @@ export interface KeyRotationStatus {
   lastRotationAt: string;
   nextRotationAt: string;
 }
+
+// ── Security & Isolation surface ─────────────────────────────────────────────
+
+export type IsolationControlId =
+  | "network"
+  | "storage"
+  | "iam"
+  | "encryption"
+  | "namespace";
+
+export interface IsolationControlDef {
+  id: IsolationControlId;
+  label: string;
+  description: string;
+}
+
+export type IsolationCellStatus = "pass" | "warn" | "fail" | "remediating";
+
+export interface FrameworkCitation {
+  framework: string; // e.g., "HIPAA", "SOC 2", "ISO 27001"
+  section: string; // e.g., "164.312(a)(1)"
+  description: string;
+}
+
+export interface AffectedResource {
+  id: string;
+  type: "Volume" | "Repository Pool" | "Restore Point" | "Snapshot" | "IAM Role" | "Network Rule" | "KMS Key" | "Namespace";
+  description: string;
+  ownerTenantId?: string;
+  lastAccessedAt?: string;
+}
+
+export interface RemediationStepDef {
+  id: string;
+  title: string;
+  description: string;
+  estimatedDurationLabel: string;
+  substeps: string[];
+  completionDurationLabel: string;
+}
+
+export interface IsolationCellViolation {
+  description: string;
+  severity: AlertSeverity;
+  firstDetectedAt: string;
+  detectionSource: string;
+  frameworkCitations: FrameworkCitation[];
+  affectedResources: AffectedResource[];
+  blastRadius: string;
+  customerNotificationTrigger: string;
+  estimatedRemediationLabel: string;
+  likelihood: "Low" | "Medium" | "High";
+  recommendedAction: string;
+  remediationSteps: RemediationStepDef[];
+  evidenceLog: string;
+  configurationSnapshot: string;
+  evidencePackageId: string;
+  history: {
+    firstDetectedAt: string;
+    failsLast30d: number;
+    successfulRemediations: number;
+    lastSuccessfulPassAt: string;
+    pattern: string;
+  };
+}
+
+export interface IsolationCell {
+  tenantId: string;
+  controlId: IsolationControlId;
+  status: IsolationCellStatus;
+  lastEvaluatedAt: string;
+  evidence: string;
+  violation?: IsolationCellViolation;
+  acknowledged?: boolean;
+}
+
+export type ThreatDetectionType =
+  | "Unusual Access Pattern"
+  | "Mass Deletion"
+  | "Ransomware Signature"
+  | "Anomalous Encryption"
+  | "Data Exfiltration Pattern"
+  | "Privilege Escalation Attempt";
+
+export interface ThreatDetection {
+  id: string;
+  tenantId: string;
+  detectionType: ThreatDetectionType;
+  severity: AlertSeverity;
+  status: ThreatEventStatus;
+  detectedAt: string;
+  analyst: string;
+  detail: string;
+  history: Array<{
+    at: string;
+    by: string;
+    from: ThreatEventStatus | null;
+    to: ThreatEventStatus;
+    note: string;
+  }>;
+}
+
+export interface RbacRoleSummary {
+  id: string;
+  name: string;
+  userCount: number;
+  scope: string;
+}
+
+export interface OperatorAccessRow {
+  operatorId: string;
+  operatorName: string;
+  initials: string;
+  tenantsAssigned: number;
+  role: string;
+  mfaEnforced: boolean;
+}
+
+export type AccessRequestStatus = "pending" | "approved" | "denied";
+
+export interface AccessRequest {
+  id: string;
+  requesterName: string;
+  requesterInitials: string;
+  requestedRole: string;
+  scope: string;
+  requestedAt: string;
+  justification: string;
+  status: AccessRequestStatus;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  resolutionNote?: string;
+}
+
+export interface ComplianceFrameworkPosture {
+  framework: string;
+  fullLabel: string;
+  compliancePct: number;
+  compliantCount: number;
+  totalCount: number;
+  findings: Array<{ tenantId: string; tenantName: string; findings: string[] }>;
+}
+
+export interface SecurityScheduleEntry {
+  controlId: IsolationControlId | "full-sweep";
+  label: string;
+  frequencyHours: number; // for full-sweep, derived
+  lastRunAt: string;
+  nextRunAt: string;
+}
+
+export interface SecurityBannerState {
+  acknowledged: boolean;
+  acknowledgedBy?: string;
+  acknowledgedAt?: string;
+  acknowledgmentNote?: string;
+  estimatedResolution?: string;
+}
+
+export interface AttestationReport {
+  id: string;
+  title: string;
+  generatedAt: string;
+  generatedBy: string;
+  reportingPeriodStart: string;
+  reportingPeriodEnd: string;
+  frameworks: string[];
+  tenantCount: number;
+  distributionList: string[];
+}
