@@ -28,12 +28,12 @@ import { currentOperator, mockData } from "@/lib/mock-data";
 export function AppTopbar() {
   const setCommandPaletteOpen = useConsoleStore((s) => s.setCommandPaletteOpen);
   const openAlertCount = mockData.alerts.filter((a) => a.status === "open").length;
-  const [syncedSeconds, setSyncedSeconds] = useState(2);
+  const [syncedSeconds, setSyncedSeconds] = useState(0);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setSyncedSeconds((prev) => (prev >= 6 ? 1 : prev + 1));
-    }, 1000);
+      setSyncedSeconds((prev) => (prev >= 30 ? 0 : prev + 2));
+    }, 2000);
     return () => clearInterval(interval);
   }, []);
 
@@ -120,6 +120,14 @@ export function AppTopbar() {
 }
 
 function LiveStatus({ seconds }: { seconds: number }) {
+  const label =
+    seconds === 0 ? (
+      <>just now</>
+    ) : (
+      <>
+        <span className="tabular-nums text-text-primary">{seconds}s</span> ago
+      </>
+    );
   return (
     <div className="hidden items-center gap-2 rounded-full border border-border-subtle bg-canvas px-2.5 py-1 lg:flex">
       <span className="relative flex h-2 w-2">
@@ -127,8 +135,7 @@ function LiveStatus({ seconds }: { seconds: number }) {
         <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-primary" />
       </span>
       <span className="text-[11px] font-medium text-text-secondary">
-        Live · synced{" "}
-        <span className="tabular-nums text-text-primary">{seconds}s</span> ago
+        Live · synced {label}
       </span>
     </div>
   );
