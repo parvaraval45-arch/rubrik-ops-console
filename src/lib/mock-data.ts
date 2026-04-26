@@ -7,6 +7,7 @@ import type {
   AuditEvent,
   BackupJob,
   Cluster,
+  CompletedOnboarding,
   DetailedAuditEvent,
   Industry,
   Invoice,
@@ -21,6 +22,7 @@ import type {
   JobType,
   KeyRotationStatus,
   MonthlyConsumption,
+  OnboardingDraft,
   Operator,
   Policy,
   PolicyAssignment,
@@ -30,12 +32,14 @@ import type {
   PolicyVersion,
   QuotaUsage,
   Region,
+  ResellerEntity,
   RestorePoint,
   Tenant,
   TenantStatus,
   ThreatEvent,
   ThreatEventStatus,
   Tier,
+  ValidationWindowEntry,
   Workload,
   WorkloadStatus,
   WorkloadType,
@@ -154,12 +158,22 @@ const operators: Operator[] = [
 ];
 
 const clusters: Cluster[] = [
-  { id: "cls_us_east_1", name: "rbk-prod-use1", region: "us-east-1", capacityTB: 4800, usedTB: 0, tenantCount: 0, status: "healthy" },
-  { id: "cls_us_west_2", name: "rbk-prod-usw2", region: "us-west-2", capacityTB: 3600, usedTB: 0, tenantCount: 0, status: "healthy" },
-  { id: "cls_eu_west_1", name: "rbk-prod-euw1", region: "eu-west-1", capacityTB: 2400, usedTB: 0, tenantCount: 0, status: "healthy" },
-  { id: "cls_ap_south_1", name: "rbk-prod-aps1", region: "ap-south-1", capacityTB: 1800, usedTB: 0, tenantCount: 0, status: "degraded" },
-  { id: "cls_eu_west_1_b", name: "rbk-prod-euw1-b", region: "eu-west-1", capacityTB: 2400, usedTB: 0, tenantCount: 0, status: "healthy" },
+  { id: "cls_us_east_1", name: "us-east-rsc-cluster-01", region: "us-east-1", capacityTB: 1200, usedTB: 0, tenantCount: 0, status: "healthy" },
+  { id: "cls_us_east_2", name: "us-east-rsc-cluster-02", region: "us-east-1", capacityTB: 1200, usedTB: 0, tenantCount: 0, status: "healthy" },
+  { id: "cls_us_west_1", name: "us-west-rsc-cluster-01", region: "us-west-2", capacityTB: 1200, usedTB: 0, tenantCount: 0, status: "healthy" },
+  { id: "cls_eu_west_1", name: "eu-west-rsc-cluster-01", region: "eu-west-1", capacityTB: 800, usedTB: 0, tenantCount: 0, status: "healthy" },
+  { id: "cls_ap_south_1", name: "ap-rsc-cluster-01", region: "ap-south-1", capacityTB: 600, usedTB: 0, tenantCount: 0, status: "degraded" },
 ];
+
+export const resellers: ResellerEntity[] = [
+  { id: "rsl_apex", name: "Apex IT Partners" },
+  { id: "rsl_dataguard", name: "DataGuard Solutions Group" },
+  { id: "rsl_resilient", name: "Resilient Cloud Services" },
+  { id: "rsl_pinnacle", name: "Pinnacle Tech Advisors" },
+  { id: "rsl_vertex", name: "Vertex MSP Network" },
+];
+
+export const ONBOARDING_REFERENCE = Date.parse("2026-04-26T18:00:00Z");
 
 function generateTenants(): Tenant[] {
   const tiers = rangeShuffle(TIER_DISTRIBUTION);
@@ -607,6 +621,202 @@ for (const policy of policies) {
   const applied = faker.helpers.arrayElements(tenants, { min: 4, max: 22 }).map((t) => t.id);
   policy.appliedTenants = applied;
 }
+
+// Override cluster utilization to spec values for the onboarding wizard surface.
+const CLUSTER_UTIL_SPEC: Record<string, { usedTB: number; tenantCount: number }> = {
+  cls_us_east_1: { usedTB: 847, tenantCount: 14 },
+  cls_us_east_2: { usedTB: 1102, tenantCount: 23 },
+  cls_us_west_1: { usedTB: 543, tenantCount: 8 },
+  cls_eu_west_1: { usedTB: 678, tenantCount: 12 },
+  cls_ap_south_1: { usedTB: 234, tenantCount: 4 },
+};
+for (const c of clusters) {
+  const spec = CLUSTER_UTIL_SPEC[c.id];
+  if (spec) {
+    c.usedTB = spec.usedTB;
+    c.tenantCount = spec.tenantCount;
+  }
+}
+
+// ── Onboarding queue seed data ───────────────────────────────────────────────
+
+const DAYS = (n: number) => n * 24 * 60 * 60_000;
+const HOURS = (n: number) => n * 60 * 60_000;
+const MINUTES = (n: number) => n * 60_000;
+
+const seedDrafts: OnboardingDraft[] = [
+  {
+    id: "draft_mercy",
+    status: "in-progress",
+    currentStep: 4,
+    tenantName: "Mercy General Hospital",
+    legalEntity: "Mercy General Hospital, Inc.",
+    industry: "Healthcare",
+    region: "us-east-1",
+    primaryContact: "Karen Mitchell",
+    contactEmail: "karen.mitchell@mercygeneral.org",
+    resellerType: "direct",
+    isAdditionalSite: false,
+    tier: "Gold",
+    clusterId: "cls_us_east_1",
+    storageTier: "Capacity",
+    allocationTB: 25,
+    quotas: {
+      storageTB: 25,
+      storageSoftPct: 80,
+      storageHardLimit: "allow-with-notification",
+      workloads: 200,
+      workloadsHardLimit: "block-new-backups",
+      transferOutTB: 10,
+      transferOutHardLimit: "allow-with-notification",
+      restorePoints: 50_000,
+      restorePointsHardLimit: "auto-purge-oldest",
+      overrideApprovalRequired: false,
+    },
+    createdAt: new Date(ONBOARDING_REFERENCE - DAYS(1) - HOURS(2)).toISOString(),
+    createdBy: "Alex Morrison",
+    updatedAt: new Date(ONBOARDING_REFERENCE - HOURS(2)).toISOString(),
+    updatedBy: "Alex Morrison",
+    assignedTo: "Lisa Chen",
+    reassignmentHistory: [
+      {
+        from: "Alex Morrison",
+        to: "Lisa Chen",
+        at: new Date(ONBOARDING_REFERENCE - HOURS(2)).toISOString(),
+        note: "Sales-complete. Handing off to tech lead for policy + isolation.",
+      },
+    ],
+  },
+  {
+    id: "draft_crawford",
+    status: "in-progress",
+    currentStep: 6,
+    tenantName: "Crawford & Associates LLP",
+    legalEntity: "Crawford & Associates, LLP",
+    industry: "Legal",
+    region: "us-east-1",
+    primaryContact: "Jonathan Crawford",
+    contactEmail: "jcrawford@crawfordlegal.com",
+    resellerType: "reseller",
+    resellerId: "rsl_apex",
+    isAdditionalSite: false,
+    tier: "Gold",
+    clusterId: "cls_us_east_2",
+    storageTier: "Capacity",
+    allocationTB: 18,
+    quotas: {
+      storageTB: 18,
+      storageSoftPct: 80,
+      storageHardLimit: "allow-with-notification",
+      workloads: 120,
+      workloadsHardLimit: "block-new-backups",
+      transferOutTB: 6,
+      transferOutHardLimit: "allow-with-notification",
+      restorePoints: 30_000,
+      restorePointsHardLimit: "auto-purge-oldest",
+      overrideApprovalRequired: false,
+    },
+    policyTemplateId: "pol_2",
+    inheritanceMode: "Override Allowed",
+    isolation: {
+      namespace: "tenant-crawford-associates-llp-9c1f",
+      iam: [
+        { operatorId: "op_1", role: "Admin" },
+        { operatorId: "op_3", role: "Operator" },
+      ],
+      tenantAdminEmail: "jcrawford@crawfordlegal.com",
+      sendInviteOnDeploy: true,
+      mfaMode: "required",
+      keySource: "rubrik-managed",
+      keyRotationDays: 90,
+    },
+    createdAt: new Date(ONBOARDING_REFERENCE - DAYS(3) - HOURS(2)).toISOString(),
+    createdBy: "Alex Morrison",
+    updatedAt: new Date(ONBOARDING_REFERENCE - HOURS(4)).toISOString(),
+    updatedBy: "Lisa Chen",
+    assignedTo: "Derek Williams",
+    reassignmentHistory: [
+      {
+        from: "Alex Morrison",
+        to: "Lisa Chen",
+        at: new Date(ONBOARDING_REFERENCE - DAYS(2)).toISOString(),
+      },
+      {
+        from: "Lisa Chen",
+        to: "Derek Williams",
+        at: new Date(ONBOARDING_REFERENCE - HOURS(4)).toISOString(),
+        note: "Tech complete. Billing operator finalizing reseller commission.",
+      },
+    ],
+  },
+  {
+    id: "draft_northbridge",
+    status: "in-progress",
+    currentStep: 2,
+    tenantName: "Northbridge Capital",
+    legalEntity: "Northbridge Capital LLC",
+    industry: "Financial",
+    region: "us-east-1",
+    primaryContact: "Daniel Hayes",
+    contactEmail: "dhayes@northbridgecap.com",
+    resellerType: "direct",
+    isAdditionalSite: false,
+    tier: "Platinum",
+    createdAt: new Date(ONBOARDING_REFERENCE - DAYS(5)).toISOString(),
+    createdBy: "Priya Patel",
+    updatedAt: new Date(ONBOARDING_REFERENCE - DAYS(1)).toISOString(),
+    updatedBy: "Priya Patel",
+    assignedTo: "Priya Patel",
+    reassignmentHistory: [],
+  },
+];
+
+const seedValidationWindow: ValidationWindowEntry[] = [
+  {
+    tenantId: "t_018",
+    tenantName: "Sapphire Hotels International",
+    windowEndsAt: new Date(ONBOARDING_REFERENCE + DAYS(3)).toISOString(),
+    daysRemaining: 3,
+    status: "Healthy",
+    lastCheckAt: new Date(ONBOARDING_REFERENCE - HOURS(1)).toISOString(),
+    issuesCount: 0,
+  },
+  {
+    tenantId: "t_016",
+    tenantName: "TerraFirma Construction",
+    windowEndsAt: new Date(ONBOARDING_REFERENCE + DAYS(5)).toISOString(),
+    daysRemaining: 5,
+    status: "Watch",
+    lastCheckAt: new Date(ONBOARDING_REFERENCE - MINUTES(30)).toISOString(),
+    issuesCount: 1,
+    issueDetail: "1 backup retry occurred Day 1, no further issues.",
+  },
+];
+
+const COMPLETED_ONBOARDING_NAMES = [
+  "Pacific Coast Medical Center",
+  "Hawthorne Manufacturing",
+  "Summit Financial Group",
+  "Redwood School District",
+  "Cascade Energy Partners",
+  "Atlas Logistics Corp",
+  "Pinnacle Insurance Group",
+  "Lakewood Community Health",
+  "Sterling Aerospace",
+];
+
+const seedCompleted: CompletedOnboarding[] = COMPLETED_ONBOARDING_NAMES.map((name, i) => {
+  const tenant = tenants.find((t) => t.name === name);
+  const baseDuration = i === 0 ? 8 * 60 : i === 8 ? 47 * 60 : 15 * 60 + faker.number.int({ min: 0, max: 10 * 60 });
+  return {
+    id: `cmp_${i}`,
+    tenantId: tenant?.id ?? `t_unknown_${i}`,
+    tenantName: name,
+    completedAt: new Date(ONBOARDING_REFERENCE - DAYS(faker.number.int({ min: 1, max: 28 }))).toISOString(),
+    totalDurationSec: baseDuration,
+    deployedBy: faker.helpers.arrayElement(operators).name,
+  };
+});
 
 // ── Per-tenant detail data ────────────────────────────────────────────────────
 
@@ -1107,6 +1317,10 @@ export const mockData = {
   clusters,
   operators,
   tenantDetails,
+  resellers,
+  drafts: seedDrafts,
+  validationWindow: seedValidationWindow,
+  completedOnboardings: seedCompleted,
 };
 
 export const currentOperator: Operator = operators[0];

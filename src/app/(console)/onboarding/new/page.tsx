@@ -1,15 +1,27 @@
-import { UserPlus } from "lucide-react";
-import { PlaceholderPage } from "@/components/data/placeholder-page";
+"use client";
+
+import { useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
+import { useConsoleStore } from "@/lib/store";
+import { currentOperator } from "@/lib/mock-data";
 
 export default function OnboardingNewPage() {
+  const router = useRouter();
+  const createDraft = useConsoleStore((s) => s.createDraft);
+  const created = useRef(false);
+
+  useEffect(() => {
+    if (created.current) return;
+    created.current = true;
+    const id = createDraft(currentOperator.name);
+    router.replace(`/onboarding/draft/${id}`);
+  }, [createDraft, router]);
+
   return (
-    <PlaceholderPage
-      eyebrow="Onboarding · New tenant"
-      title="New tenant wizard"
-      description="Identity, isolation, policy, and deploy — a single guided flow."
-      icon={UserPlus}
-      emptyTitle="Wizard implementation wires up next"
-      emptyDescription="The multi-step react-hook-form wizard with deploy animation will land in the next iteration."
-    />
+    <div className="flex h-[60vh] items-center justify-center text-text-tertiary">
+      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      Creating draft…
+    </div>
   );
 }

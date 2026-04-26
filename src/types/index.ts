@@ -200,18 +200,186 @@ export interface Operator {
   initials: string;
 }
 
+export type WizardStepNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+export interface ResellerEntity {
+  id: string;
+  name: string;
+}
+
+export type StorageTier = "Performance" | "Capacity" | "Archive";
+
+export type QuotaHardLimit =
+  | "block-new-backups"
+  | "allow-with-notification"
+  | "allow-with-auto-upgrade"
+  | "block-restore"
+  | "auto-purge-oldest"
+  | "notify-only";
+
+export interface QuotaConfig {
+  storageTB: number;
+  storageSoftPct: number;
+  storageHardLimit: QuotaHardLimit;
+  workloads: number;
+  workloadsHardLimit: QuotaHardLimit;
+  transferOutTB: number;
+  transferOutHardLimit: QuotaHardLimit;
+  restorePoints: number;
+  restorePointsHardLimit: QuotaHardLimit;
+  overrideApprovalRequired: boolean;
+}
+
+export type PolicyInheritanceMode = "Locked" | "Override Allowed";
+
+export type MFAMode = "required" | "optional" | "disabled";
+
+export type IamRole = "Admin" | "Operator" | "Read-Only";
+
+export interface IamAssignment {
+  operatorId: string;
+  role: IamRole;
+}
+
+export type EncryptionKeySource = "rubrik-managed" | "byok";
+
+export interface IsolationConfig {
+  namespace: string;
+  iam: IamAssignment[];
+  tenantAdminEmail: string;
+  sendInviteOnDeploy: boolean;
+  mfaMode: MFAMode;
+  mfaDisabledReason?: string;
+  keySource: EncryptionKeySource;
+  keyRotationDays: 30 | 60 | 90;
+  byokKmsEndpoint?: string;
+}
+
+export type InvoiceCadence = "Monthly" | "Quarterly" | "Annual";
+export type InvoicePaymentTerms = "Net 15" | "Net 30" | "Net 60" | "Net 90";
+export type InvoiceCurrency = "USD" | "EUR" | "GBP" | "SGD";
+
+export interface BillingConfig {
+  contactName: string;
+  billingEmail: string;
+  poNumber?: string;
+  ratePerTB: number;
+  rateOverrideReason?: string;
+  capacityCommitTB: number;
+  annualMinimumCommit: boolean;
+  overagePolicy: QuotaHardLimit;
+  cadence: InvoiceCadence;
+  paymentTerms: InvoicePaymentTerms;
+  currency: InvoiceCurrency;
+  resellerCommissionPct?: number;
+  resellerCommissionReason?: string;
+}
+
+export type DraftStatus = "in-progress" | "provisioning" | "completed" | "failed";
+
 export interface OnboardingDraft {
-  step: number;
+  id: string;
+  status: DraftStatus;
+  currentStep: WizardStepNumber;
+  // Step 1
+  tenantName?: string;
   legalEntity?: string;
-  displayName?: string;
   industry?: Industry;
   region?: Region;
-  tier?: Tier;
   primaryContact?: string;
   contactEmail?: string;
-  workloads?: string[];
+  resellerType?: "direct" | "reseller";
+  resellerId?: string;
+  isAdditionalSite?: boolean;
+  parentTenantId?: string;
+  tier?: Tier;
+  // Step 2
+  clusterId?: string;
+  storageTier?: StorageTier;
+  allocationTB?: number;
+  // Step 3
+  quotas?: QuotaConfig;
+  // Step 4
   policyTemplateId?: string;
-  isolationConfirmed?: boolean;
+  inheritanceMode?: PolicyInheritanceMode;
+  // Step 5
+  isolation?: IsolationConfig;
+  // Step 6
+  billing?: BillingConfig;
+
+  // Workflow metadata
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+  updatedBy: string;
+  assignedTo: string;
+  reassignmentHistory: Array<{
+    from: string;
+    to: string;
+    at: string;
+    note?: string;
+  }>;
+}
+
+export type ProvisioningTaskStatus =
+  | "pending"
+  | "running"
+  | "complete"
+  | "failed"
+  | "rolling-back"
+  | "rolled-back";
+
+export interface ProvisioningTaskState {
+  id: string;
+  title: string;
+  status: ProvisioningTaskStatus;
+  substepIndex: number;
+  startedAt?: number;
+  endedAt?: number;
+  durationMs?: number;
+  errorMessage?: string;
+  warning?: string;
+}
+
+export interface PreFlightCheck {
+  id: string;
+  title: string;
+  status: "pending" | "running" | "pass" | "fail";
+  detail?: string;
+  fixStep?: WizardStepNumber;
+  durationMs?: number;
+}
+
+export interface ProvisioningRun {
+  id: string;
+  draftId: string;
+  tenantName: string;
+  startedAt: string;
+  endedAt?: string;
+  tasks: ProvisioningTaskState[];
+  finalTenantId?: string;
+  failed?: boolean;
+  rollbackReason?: string;
+}
+
+export interface ValidationWindowEntry {
+  tenantId: string;
+  tenantName: string;
+  windowEndsAt: string;
+  daysRemaining: number;
+  status: "Healthy" | "Watch" | "Issue Detected";
+  lastCheckAt: string;
+  issuesCount: number;
+  issueDetail?: string;
+}
+
+export interface CompletedOnboarding {
+  id: string;
+  tenantId: string;
+  tenantName: string;
+  completedAt: string;
+  totalDurationSec: number;
+  deployedBy: string;
 }
 
 // ── Tenant detail surface ────────────────────────────────────────────────────
