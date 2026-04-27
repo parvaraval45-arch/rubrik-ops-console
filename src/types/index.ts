@@ -38,6 +38,8 @@ export interface Tenant {
   createdAt: string;
   primaryContact: string;
   contactEmail: string;
+  tags?: string[];
+  policyTemplateId?: string;
 }
 
 export type AlertSeverity = "critical" | "warning" | "info";
@@ -828,3 +830,43 @@ export interface QuotaEnforcementRow {
 }
 
 export type ExportFormat = "csv" | "json" | "connectwise" | "autotask";
+
+// ── Tenant Directory ─────────────────────────────────────────────────────────
+
+export type TenantDirectoryDensity = "compact" | "comfortable" | "spacious";
+export type TenantDirectoryView = "table" | "cards";
+
+export interface TenantTag {
+  id: string;
+  label: string;
+  tone: "neutral" | "info" | "success" | "warning" | "critical";
+}
+
+export interface DirectoryFilters {
+  status?: string[];
+  tier?: string[];
+  industry?: string[];
+  region?: string[];
+  cluster?: string[];
+  policyTemplate?: string[];
+  securityScoreMin?: number;
+  securityScoreMax?: number;
+  slaStatus?: string[];
+  capacityStatus?: string[];
+  tags?: string[];
+  search?: string;
+}
+
+export interface DirectorySavedView {
+  id: string;
+  name: string;
+  icon?: string;
+  pinned: boolean;
+  visibility: "private" | "team";
+  description?: string;
+  filters: DirectoryFilters;
+  sortKey?: string;
+  sortDir?: "asc" | "desc";
+  density?: TenantDirectoryDensity;
+  isSystem: boolean;
+}

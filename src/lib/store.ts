@@ -6,6 +6,7 @@ import type {
   AccessRequest,
   AccessRequestStatus,
   Alarm,
+  DirectorySavedView,
   AlarmState,
   Alert,
   AttestationReport,
@@ -120,6 +121,7 @@ interface ConsoleState extends PerTenantState {
   billingPeriod: BillingPeriod;
   quotaEnforcement: QuotaEnforcementRow[];
   billingHistory: Record<string, Array<{ month: string; total: number }>>;
+  directorySavedViews: DirectorySavedView[];
   sidebarCollapsed: boolean;
   commandPaletteOpen: boolean;
   density: "comfortable" | "compact";
@@ -267,6 +269,15 @@ interface ConsoleState extends PerTenantState {
     filename: string,
   ) => void;
 
+  // ── Directory bulk actions ───────────────────────────────────────────────
+  bulkSuspendTenants: (tenantIds: string[], operatorName: string, reason: string, resumeDate?: string) => void;
+  bulkApplyPolicy: (tenantIds: string[], policyId: string, operatorName: string, reason: string) => void;
+  bulkChangeTier: (tenantIds: string[], tier: Tenant["tier"], operatorName: string) => void;
+  bulkAddTag: (tenantIds: string[], tagLabel: string, operatorName: string) => void;
+  saveDirectoryView: (view: DirectorySavedView) => void;
+  deleteDirectoryView: (viewId: string) => void;
+  updateDirectoryView: (viewId: string, patch: Partial<DirectorySavedView>) => void;
+
   // ── Onboarding lifecycle ──────────────────────────────────────────────────
   createDraft: (operatorName: string) => string;
   upsertDraft: (draft: OnboardingDraft) => void;
@@ -311,6 +322,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
   billingPeriod: mockData.billingPeriod,
   quotaEnforcement: mockData.quotaEnforcement,
   billingHistory: mockData.billingHistory,
+  directorySavedViews: mockData.directorySavedViews,
   sidebarCollapsed: false,
   commandPaletteOpen: false,
   density: "comfortable",
@@ -1603,5 +1615,137 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         },
         ...s.auditEvents,
       ],
+    })),
+
+  // ── Directory bulk actions ───────────────────────────────────────────────
+  bulkSuspendTenants: (tenantIds, operatorName, reason, resumeDate) =>
+    set((s) => {
+      const ids = new Set(tenantIds);
+      const now = new Date().toISOString();
+      const events: AuditEvent[] = tenantIds.map((id) => {
+        const t = s.tenants.find((x) => x.id === id);
+        return {
+          id: makeAuditId("audit"),
+          actor: operatorName,
+          actorRole: "MSP Admin",
+          action: "tenant.suspend",
+          target: t?.name ?? id,
+          tenantId: id,
+          outcome: "success",
+          occurredAt: now,
+          ipAddress: "10.0.4.127",
+        };
+      });
+      void reason;
+      void resumeDate;
+      return {
+        tenants: s.tenants.map((t) =>
+          ids.has(t.id) ? { ...t, status: "Suspended" as const } : t,
+        ),
+        auditEvents: [...events, ...s.auditEvents],
+      };
+    }),
+
+  bulkApplyPolicy: (tenantIds, policyId, operatorName, reason) =>
+    set((s) => {
+      const ids = new Set(tenantIds);
+      const now = new Date().toISOString();
+      const events: AuditEvent[] = tenantIds.map((id) => {
+        const t = s.tenants.find((x) => x.id === id);
+        return {
+          id: makeAuditId("audit"),
+          actor: operatorName,
+          actorRole: "MSP Admin",
+          action: "policy.apply",
+          target: t?.name ?? id,
+          tenantId: id,
+          outcome: "success",
+          occurredAt: now,
+          ipAddress: "10.0.4.127",
+        };
+      });
+      void reason;
+      return {
+        tenants: s.tenants.map((t) =>
+          ids.has(t.id) ? { ...t, policyTemplateId: policyId } : t,
+        ),
+        auditEvents: [...events, ...s.auditEvents],
+      };
+    }),
+
+  bulkChangeTier: (tenantIds, tier, operatorName) =>
+    set((s) => {
+      const ids = new Set(tenantIds);
+      const now = new Date().toISOString();
+      const events: AuditEvent[] = tenantIds.map((id) => {
+        const t = s.tenants.find((x) => x.id === id);
+        return {
+          id: makeAuditId("audit"),
+          actor: operatorName,
+          actorRole: "MSP Admin",
+          action: "tenant.tier",
+          target: t?.name ?? id,
+          tenantId: id,
+          outcome: "success",
+          occurredAt: now,
+          ipAddress: "10.0.4.127",
+        };
+      });
+      return {
+        tenants: s.tenants.map((t) => (ids.has(t.id) ? { ...t, tier } : t)),
+        auditEvents: [...events, ...s.auditEvents],
+      };
+    }),
+
+  bulkAddTag: (tenantIds, tagLabel, operatorName) =>
+    set((s) => {
+      const ids = new Set(tenantIds);
+      const now = new Date().toISOString();
+      const events: AuditEvent[] = tenantIds.map((id) => {
+        const t = s.tenants.find((x) => x.id === id);
+        return {
+          id: makeAuditId("audit"),
+          actor: operatorName,
+          actorRole: "MSP Admin",
+          action: "tenant.tag",
+          target: t?.name ?? id,
+          tenantId: id,
+          outcome: "success",
+          occurredAt: now,
+          ipAddress: "10.0.4.127",
+        };
+      });
+      return {
+        tenants: s.tenants.map((t) =>
+          ids.has(t.id)
+            ? {
+                ...t,
+                tags: Array.from(new Set([...(t.tags ?? []), tagLabel])),
+              }
+            : t,
+        ),
+        auditEvents: [...events, ...s.auditEvents],
+      };
+    }),
+
+  saveDirectoryView: (view) =>
+    set((s) => ({
+      directorySavedViews: s.directorySavedViews.some((v) => v.id === view.id)
+        ? s.directorySavedViews.map((v) => (v.id === view.id ? view : v))
+        : [...s.directorySavedViews, view],
+    })),
+
+  deleteDirectoryView: (viewId) =>
+    set((s) => ({
+      directorySavedViews: s.directorySavedViews.filter(
+        (v) => v.id !== viewId || v.isSystem,
+      ),
+    })),
+
+  updateDirectoryView: (viewId, patch) =>
+    set((s) => ({
+      directorySavedViews: s.directorySavedViews.map((v) =>
+        v.id === viewId ? { ...v, ...patch } : v,
+      ),
     })),
 }));

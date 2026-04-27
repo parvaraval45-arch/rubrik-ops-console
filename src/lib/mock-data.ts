@@ -2,6 +2,8 @@ import { faker } from "@faker-js/faker";
 import type {
   AccessRequest,
   AffectedResource,
+  DirectorySavedView,
+  TenantTag,
   Alarm,
   AlarmCategory,
   Alert,
@@ -259,6 +261,8 @@ function generateTenants(): Tenant[] {
       contactEmail: faker.internet
         .email({ firstName: contactName.split(" ")[0], lastName: contactName.split(" ").slice(-1)[0] })
         .toLowerCase(),
+      tags: [],
+      policyTemplateId: undefined,
     };
   });
 
@@ -639,6 +643,39 @@ const { checks: isolationChecks, violations: isolationViolations } = generateIso
 for (const policy of policies) {
   const applied = faker.helpers.arrayElements(tenants, { min: 4, max: 22 }).map((t) => t.id);
   policy.appliedTenants = applied;
+}
+
+// ── Directory tags ───────────────────────────────────────────────────────────
+
+const TENANT_TAG_CATALOG: TenantTag[] = [
+  { id: "tag_renewal_q2", label: "renewal-q2", tone: "warning" },
+  { id: "tag_high_touch", label: "high-touch", tone: "info" },
+  { id: "tag_sox_scope", label: "sox-scope", tone: "critical" },
+  { id: "tag_p1_customer", label: "p1-customer", tone: "critical" },
+  { id: "tag_expansion", label: "expansion-candidate", tone: "success" },
+  { id: "tag_migration", label: "migration-2026", tone: "info" },
+  { id: "tag_qbr_due", label: "qbr-due", tone: "warning" },
+  { id: "tag_compliance", label: "compliance-audit", tone: "critical" },
+  { id: "tag_strategic", label: "strategic", tone: "success" },
+  { id: "tag_renewal_q3", label: "renewal-q3", tone: "warning" },
+];
+
+// Deterministically assign 1-3 tags per tenant based on name hash, with
+// industry/tier biasing.
+for (const t of tenants) {
+  const tagPool: string[] = [];
+  if (t.industry === "Financial") tagPool.push("sox-scope");
+  if (t.tier === "Platinum") tagPool.push("p1-customer", "high-touch");
+  if (t.tier === "Gold" && tenants.indexOf(t) % 4 === 0) tagPool.push("renewal-q2");
+  if (t.tier === "Silver" && tenants.indexOf(t) % 5 === 0) tagPool.push("renewal-q3");
+  if (t.industry === "Healthcare" || t.industry === "Aerospace") tagPool.push("compliance-audit");
+  if (t.capacityUsedTB / Math.max(1, t.capacityCommittedTB) > 0.85) tagPool.push("expansion-candidate");
+  if (tenants.indexOf(t) % 7 === 0) tagPool.push("strategic");
+  if (tenants.indexOf(t) % 9 === 0) tagPool.push("qbr-due");
+  if (tenants.indexOf(t) % 11 === 0) tagPool.push("migration-2026");
+  if (t.securityScore < 75) tagPool.push("high-touch");
+  // Dedupe + cap to 3
+  t.tags = Array.from(new Set(tagPool)).slice(0, 3);
 }
 
 // Override cluster utilization to spec values for the onboarding wizard surface.
@@ -2277,6 +2314,69 @@ function buildBillingHistory(): Record<string, Array<{ month: string; total: num
 
 const billingHistory = buildBillingHistory();
 
+// ── Directory saved views ────────────────────────────────────────────────────
+
+const directorySavedViews: DirectorySavedView[] = [
+  {
+    id: "view_all",
+    name: "All Tenants",
+    pinned: true,
+    visibility: "team",
+    filters: {},
+    isSystem: true,
+  },
+  {
+    id: "view_active",
+    name: "Active",
+    pinned: true,
+    visibility: "team",
+    filters: { status: ["Active"] },
+    isSystem: true,
+  },
+  {
+    id: "view_at_risk",
+    name: "At Risk",
+    pinned: true,
+    visibility: "team",
+    filters: { slaStatus: ["At Risk", "Breached"], capacityStatus: ["Approaching Limit", "Over Commit"] },
+    sortKey: "securityScore",
+    sortDir: "asc",
+    isSystem: true,
+  },
+  {
+    id: "view_renewal",
+    name: "Up for Renewal",
+    pinned: true,
+    visibility: "team",
+    filters: { tags: ["renewal-q2", "renewal-q3"] },
+    isSystem: true,
+  },
+  {
+    id: "view_onboarding",
+    name: "Onboarding",
+    pinned: true,
+    visibility: "team",
+    filters: { status: ["Onboarding"] },
+    isSystem: true,
+  },
+  {
+    id: "view_healthcare",
+    name: "Healthcare",
+    pinned: true,
+    visibility: "team",
+    filters: { industry: ["Healthcare"] },
+    isSystem: true,
+  },
+  {
+    id: "view_financial",
+    name: "Financial Services",
+    pinned: true,
+    visibility: "team",
+    filters: { industry: ["Financial"] },
+    isSystem: true,
+  },
+];
+
 export const mockData = {
   tenants,
   policies,
@@ -2304,6 +2404,8 @@ export const mockData = {
   billingPeriod,
   quotaEnforcement,
   billingHistory,
+  directorySavedViews,
+  tenantTagCatalog: TENANT_TAG_CATALOG,
 };
 
 export const currentOperator: Operator = operators[0];
