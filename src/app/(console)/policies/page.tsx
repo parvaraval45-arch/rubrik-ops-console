@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Download, Plus, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,14 @@ import { CreateTemplateDialog } from "@/components/policies/create-template-dial
 import { rollupTemplateStatus } from "@/components/policies/policy-helpers";
 
 export default function PoliciesPage() {
+  return (
+    <Suspense fallback={<div className="h-2" />}>
+      <PoliciesPageInner />
+    </Suspense>
+  );
+}
+
+function PoliciesPageInner() {
   const templates = useConsoleStore((s) => s.policyTemplates);
   const assignments = useConsoleStore((s) => s.policyTemplateAssignments);
   const overrides = useConsoleStore((s) => s.policyTemplateOverrides);
