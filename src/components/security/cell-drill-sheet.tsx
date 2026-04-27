@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { format, parseISO } from "date-fns";
 import {
   AlertOctagon,
@@ -39,7 +40,9 @@ import {
   Sheet,
   SheetContent,
   SheetHeader,
+  SheetTitle,
 } from "@/components/ui/sheet";
+import { VisuallyHidden } from "radix-ui";
 import { Textarea } from "@/components/ui/textarea";
 import { useConsoleStore } from "@/lib/store";
 import { ISOLATION_CONTROLS, currentOperator, mockData } from "@/lib/mock-data";
@@ -90,6 +93,9 @@ export function CellDrillSheet({ open, onOpenChange, tenant, cell }: CellDrillSh
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent className="flex w-full p-0 sm:max-w-[560px]">
+          <VisuallyHidden.Root>
+            <SheetTitle>Isolation cell detail</SheetTitle>
+          </VisuallyHidden.Root>
           <div />
         </SheetContent>
       </Sheet>
@@ -149,15 +155,22 @@ export function CellDrillSheet({ open, onOpenChange, tenant, cell }: CellDrillSh
                   >
                     {STATUS_BADGE[cell.status].label}
                   </Badge>
-                  <h2 className="text-[15px] font-semibold leading-snug text-text-primary">
+                  <SheetTitle className="text-[15px] font-semibold leading-snug text-text-primary">
                     {tenant.name}
-                  </h2>
+                  </SheetTitle>
                   <p className="text-[12px] text-text-tertiary">
                     {control?.label} Isolation · Last checked{" "}
                     <span suppressHydrationWarning>
                       {formatRelativeTime(cell.lastEvaluatedAt)}
                     </span>
                   </p>
+                  <Link
+                    href={`/tenants/${tenant.id}?tab=security`}
+                    className="mt-1 inline-flex w-fit items-center gap-1 text-[11.5px] font-medium text-brand-primary-hover underline-offset-2 hover:underline"
+                  >
+                    View tenant
+                    <span aria-hidden>&rarr;</span>
+                  </Link>
                 </div>
               </div>
               <button

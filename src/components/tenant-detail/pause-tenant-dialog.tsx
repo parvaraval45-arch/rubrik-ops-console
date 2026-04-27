@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { toast } from "sonner";
+import { feedback } from "@/lib/feedback";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -25,6 +25,7 @@ interface PauseTenantDialogProps {
 
 export function PauseTenantDialog({ tenant, open, onOpenChange }: PauseTenantDialogProps) {
   const pauseTenant = useConsoleStore((s) => s.pauseTenant);
+  const resumeTenant = useConsoleStore((s) => s.resumeTenant);
   const [reason, setReason] = useState("");
   const [resumeDate, setResumeDate] = useState("");
   const [touched, setTouched] = useState(false);
@@ -40,8 +41,14 @@ export function PauseTenantDialog({ tenant, open, onOpenChange }: PauseTenantDia
       return;
     }
     pauseTenant(tenant.id, reason.trim(), resumeDate || undefined);
-    toast.success(`${tenant.name} paused.`, {
-      description: `Tenant admin notified at ${tenant.contactEmail}`,
+    feedback.destructive(`${tenant.name} paused`, {
+      description: `Tenant admin notified at ${tenant.contactEmail}.`,
+      undo: () => {
+        resumeTenant(tenant.id);
+        feedback.info("Pause undone", {
+          description: `${tenant.name} restored to active.`,
+        });
+      },
     });
     setReason("");
     setResumeDate("");

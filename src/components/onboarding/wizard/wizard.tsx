@@ -147,7 +147,14 @@ export function OnboardingWizard({ draftId }: WizardProps) {
   // Pre-flight state
   const [preflight, setPreflight] = useState<PreFlightCheck[]>(initialPreflight());
   const [preflightRunning, setPreflightRunning] = useState(false);
+  const preflightTimersRef = useRef<number[]>([]);
   const preflightAllPassed = preflight.every((c) => c.status === "pass");
+
+  useEffect(() => {
+    return () => {
+      for (const t of preflightTimersRef.current) window.clearTimeout(t);
+    };
+  }, []);
   const [hasRunPreflightOnce, setHasRunPreflightOnce] = useState(false);
 
   // Autosave state
@@ -304,6 +311,15 @@ export function OnboardingWizard({ draftId }: WizardProps) {
   };
 
   const runPreFlight = () => {
+    // Re-entrancy guard. If a run is already in flight, ignore the click — this
+    // also prevents stale timers from a previous run from racing with new state
+    // and producing duplicate ids.
+    if (preflightRunning) return;
+
+    // Cancel any timers left over from a prior run.
+    for (const t of preflightTimersRef.current) window.clearTimeout(t);
+    preflightTimersRef.current = [];
+
     setPreflightRunning(true);
     const checks = generatePreFlightChecks({
       tenantName,
@@ -313,42 +329,70 @@ export function OnboardingWizard({ draftId }: WizardProps) {
       conflictTenant: hasRunPreflightOnce ? null : "Crawford & Associates LLP",
     });
 
-    let i = 0;
-    const next = () => {
-      const check = checks[i];
-      // Mark running
-      setPreflight((prev) =>
-        prev.map((c, idx) => (idx === i ? { ...c, status: "running" } : c)),
+    // Replace state with a freshly-built array so we can never accumulate
+    // duplicate ids from prior runs. Each entry takes its identity from the
+    // canonical initialPreflight() array.
+    const fresh = initialPreflight();
+    setPreflight(fresh);
+
+    const durations = checks.map((_, i) => 480 + ((i * 73) % 320));
+    const timers: number[] = [];
+    let stopped = false;
+    let firstFailureAt = -1;
+    preflightTimersRef.current = timers;
+
+    checks.forEach((check, i) => {
+      const cumulative = durations.slice(0, i).reduce((s, v) => s + v, 0);
+
+      timers.push(
+        window.setTimeout(() => {
+          if (stopped) return;
+          setPreflight((prev) =>
+            prev.map((c, idx) => (idx === i ? { ...c, status: "running" } : c)),
+          );
+        }, cumulative),
       );
-      const startedAt = performance.now();
-      setTimeout(() => {
-        const duration = Math.round(performance.now() - startedAt);
-        setPreflight((prev) =>
-          prev.map((c, idx) =>
-            idx === i ? { ...c, ...check, durationMs: duration } : c,
-          ),
-        );
-        if (check.status === "fail") {
-          setPreflightRunning(false);
-          setHasRunPreflightOnce(true);
-          toast.error("Pre-flight check failed", {
-            description: check.detail ?? "Resolve the issue and re-run.",
-          });
-          return;
-        }
-        i += 1;
-        if (i < checks.length) {
-          next();
-        } else {
-          setPreflightRunning(false);
-          setHasRunPreflightOnce(true);
-          toast.success("Pre-flight passed", {
-            description: "All 8 checks green. Ready to deploy.",
-          });
-        }
-      }, 500 + Math.random() * 350);
-    };
-    next();
+
+      timers.push(
+        window.setTimeout(() => {
+          if (stopped) return;
+          setPreflight((prev) =>
+            prev.map((c, idx) =>
+              idx === i
+                ? {
+                    // Anchor identity to the canonical fresh entry — never
+                    // spread ids out of `check`, so duplicates are impossible.
+                    ...fresh[idx],
+                    status: check.status,
+                    detail: check.detail,
+                    fixStep: check.fixStep ?? fresh[idx].fixStep,
+                    durationMs: durations[i],
+                  }
+                : c,
+            ),
+          );
+          if (check.status === "fail" && firstFailureAt === -1) {
+            firstFailureAt = i;
+            stopped = true;
+            for (const t of timers) window.clearTimeout(t);
+            setPreflightRunning(false);
+            setHasRunPreflightOnce(true);
+            toast.error("Pre-flight check failed", {
+              description: check.detail ?? "Resolve the issue and re-run.",
+            });
+          } else if (i === checks.length - 1) {
+            setPreflightRunning(false);
+            setHasRunPreflightOnce(true);
+            const allPass = checks.every((c) => c.status === "pass");
+            if (allPass) {
+              toast.success("Pre-flight passed", {
+                description: `All ${checks.length} checks green. Ready to deploy.`,
+              });
+            }
+          }
+        }, cumulative + durations[i]),
+      );
+    });
   };
 
   const handleDeploy = () => {

@@ -33,14 +33,23 @@ import type {
   Policy,
   PolicyAssignment,
   PolicyOverride,
+  PolicyTemplate,
+  PolicyTemplateAuditAction,
+  PolicyTemplateAuditEntry,
+  PolicyTemplateConfig,
+  PolicyTemplateOverride,
+  PolicyTemplateRollout,
+  PolicyTemplateVersion,
   PolicyVersion,
   QuotaEnforcementRow,
   QuotaUsage,
   RbacRoleSummary,
   RestorePoint,
+  RolloutPhase,
   SecurityBannerState,
   SecurityScheduleEntry,
   Tenant,
+  TenantTemplateAssignment,
   ThreatDetection,
   ThreatEvent,
   ThreatEventStatus,
@@ -278,6 +287,59 @@ interface ConsoleState extends PerTenantState {
   deleteDirectoryView: (viewId: string) => void;
   updateDirectoryView: (viewId: string, patch: Partial<DirectorySavedView>) => void;
 
+  // ── Policy template lifecycle ────────────────────────────────────────────
+  policyTemplates: PolicyTemplate[];
+  policyTemplateAssignments: TenantTemplateAssignment[];
+  policyTemplateOverrides: PolicyTemplateOverride[];
+  policyTemplateRollouts: PolicyTemplateRollout[];
+  policyTemplateAudit: PolicyTemplateAuditEntry[];
+
+  createPolicyTemplate: (
+    template: Omit<PolicyTemplate, "id" | "currentVersion" | "versions" | "createdAt" | "updatedAt"> & {
+      initialConfig: PolicyTemplateConfig;
+      initialChangeSummary: string;
+      operatorName: string;
+      tenantIdsToAssign: string[];
+    },
+  ) => string;
+  savePolicyTemplateVersion: (
+    templateId: string,
+    config: PolicyTemplateConfig,
+    changeSummary: string,
+    operatorName: string,
+  ) => number;
+  startPolicyTemplateRollout: (
+    templateId: string,
+    note: string,
+    operatorName: string,
+  ) => string;
+  promoteRolloutPhase: (rolloutId: string, operatorName: string) => void;
+  pausePolicyRollout: (rolloutId: string, operatorName: string) => void;
+  abortPolicyRollout: (
+    rolloutId: string,
+    reason: string,
+    operatorName: string,
+  ) => void;
+  completePolicyRollout: (rolloutId: string, operatorName: string) => void;
+  applyPolicyTemplateToTenant: (
+    templateId: string,
+    tenantId: string,
+    version: number,
+    operatorName: string,
+  ) => void;
+  removePolicyTemplateFromTenant: (
+    templateId: string,
+    tenantId: string,
+    operatorName: string,
+  ) => void;
+  addPolicyTemplateOverride: (
+    override: Omit<PolicyTemplateOverride, "id" | "appliedAt">,
+  ) => void;
+  removePolicyTemplateOverride: (
+    overrideId: string,
+    operatorName: string,
+  ) => void;
+
   // ── Onboarding lifecycle ──────────────────────────────────────────────────
   createDraft: (operatorName: string) => string;
   upsertDraft: (draft: OnboardingDraft) => void;
@@ -323,6 +385,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
   quotaEnforcement: mockData.quotaEnforcement,
   billingHistory: mockData.billingHistory,
   directorySavedViews: mockData.directorySavedViews,
+  policyTemplates: mockData.policyTemplates,
+  policyTemplateAssignments: mockData.policyTemplateAssignments,
+  policyTemplateOverrides: mockData.policyTemplateOverrides,
+  policyTemplateRollouts: mockData.policyTemplateRollouts,
+  policyTemplateAudit: mockData.policyTemplateAudit,
   sidebarCollapsed: false,
   commandPaletteOpen: false,
   density: "comfortable",
@@ -1748,4 +1815,502 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         v.id === viewId ? { ...v, ...patch } : v,
       ),
     })),
+
+  // ── Policy template lifecycle ─────────────────────────────────────────────
+  createPolicyTemplate: ({
+    initialConfig,
+    initialChangeSummary,
+    operatorName,
+    tenantIdsToAssign,
+    ...rest
+  }) => {
+    const id = `tpl_${Math.random().toString(36).slice(2, 10)}`;
+    const now = new Date().toISOString();
+    const version: PolicyTemplateVersion = {
+      id: `${id}_v1`,
+      version: 1,
+      authoredBy: operatorName,
+      authoredAt: now,
+      changeSummary: initialChangeSummary || "Initial template version",
+      config: initialConfig,
+    };
+    const template: PolicyTemplate = {
+      ...rest,
+      id,
+      currentVersion: 1,
+      versions: [version],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const assignments: TenantTemplateAssignment[] = tenantIdsToAssign.map((tid) => ({
+      tenantId: tid,
+      templateId: id,
+      appliedVersion: 1,
+      appliedAt: now,
+      appliedBy: operatorName,
+    }));
+    set((s) => ({
+      policyTemplates: [template, ...s.policyTemplates],
+      policyTemplateAssignments: [...s.policyTemplateAssignments, ...assignments],
+      policyTemplateAudit: [
+        {
+          id: makeAuditId("ptaud"),
+          templateId: id,
+          occurredAt: now,
+          actor: operatorName,
+          actorRole: "MSP Admin",
+          action: "template.create" as PolicyTemplateAuditAction,
+          targetVersion: 1,
+          description: `Template created: ${template.name}`,
+          outcome: "success",
+        },
+        ...s.policyTemplateAudit,
+      ],
+    }));
+    return id;
+  },
+
+  savePolicyTemplateVersion: (templateId, config, changeSummary, operatorName) => {
+    let nextVersion = 0;
+    set((s) => {
+      const template = s.policyTemplates.find((t) => t.id === templateId);
+      if (!template) return {};
+      nextVersion = template.currentVersion + 1;
+      const now = new Date().toISOString();
+      const version: PolicyTemplateVersion = {
+        id: `${templateId}_v${nextVersion}`,
+        version: nextVersion,
+        authoredBy: operatorName,
+        authoredAt: now,
+        changeSummary,
+        config,
+      };
+      const updatedTemplate: PolicyTemplate = {
+        ...template,
+        currentVersion: nextVersion,
+        versions: [...template.versions, version],
+        updatedAt: now,
+      };
+      return {
+        policyTemplates: s.policyTemplates.map((t) =>
+          t.id === templateId ? updatedTemplate : t,
+        ),
+        policyTemplateAudit: [
+          {
+            id: makeAuditId("ptaud"),
+            templateId,
+            occurredAt: now,
+            actor: operatorName,
+            actorRole: "MSP Admin",
+            action: "template.version.publish" as PolicyTemplateAuditAction,
+            targetVersion: nextVersion,
+            description: `v${nextVersion} published: ${changeSummary}`,
+            outcome: "success",
+          },
+          ...s.policyTemplateAudit,
+        ],
+      };
+    });
+    return nextVersion;
+  },
+
+  startPolicyTemplateRollout: (templateId, note, operatorName) => {
+    const id = `roll_${templateId}_${Date.now().toString(36)}`;
+    set((s) => {
+      const template = s.policyTemplates.find((t) => t.id === templateId);
+      if (!template) return {};
+      const assigned = s.policyTemplateAssignments.filter(
+        (a) => a.templateId === templateId,
+      );
+      const olderTenantIds = assigned
+        .filter((a) => a.appliedVersion < template.currentVersion)
+        .map((a) => a.tenantId);
+      if (olderTenantIds.length === 0) return {};
+      const fromVersion = Math.min(
+        ...assigned.filter((a) => a.appliedVersion < template.currentVersion).map((a) => a.appliedVersion),
+      );
+      const tenantsByCapacity = [...olderTenantIds].sort((a, b) => {
+        const ta = s.tenants.find((t) => t.id === a)?.capacityCommittedTB ?? 0;
+        const tb = s.tenants.find((t) => t.id === b)?.capacityCommittedTB ?? 0;
+        return ta - tb;
+      });
+      const canaryCount = 1;
+      const remaining = tenantsByCapacity.slice(canaryCount);
+      const stagedCount = Math.max(1, Math.ceil(remaining.length / 2));
+      const canaryIds = tenantsByCapacity.slice(0, canaryCount);
+      const stagedIds = remaining.slice(0, stagedCount);
+      const fleetIds = remaining.slice(stagedCount);
+      const now = new Date().toISOString();
+      const rollout: PolicyTemplateRollout = {
+        id,
+        templateId,
+        fromVersion,
+        toVersion: template.currentVersion,
+        strategy: "canary-staged-fleet",
+        status: "running",
+        startedBy: operatorName,
+        startedAt: now,
+        note,
+        currentPhase: "canary",
+        validation: [
+          { id: "v_health", label: "All affected tenants currently in healthy state", status: "pass" },
+          { id: "v_alarm", label: "No active alarms on affected tenants", status: "pass" },
+          { id: "v_capacity", label: "Sufficient cluster capacity for re-encryption", status: "pass" },
+          { id: "v_conflict", label: "No conflicting policy changes in last 24h", status: "pass" },
+          { id: "v_compliance", label: "Compliance frameworks remain attested", status: "pass" },
+        ],
+        totalAffectedTenants: tenantsByCapacity.length,
+        phases: [
+          {
+            phase: "canary",
+            tenantIds: canaryIds,
+            observationHours: 24,
+            status: "running",
+            startedAt: now,
+            migratedTenantIds: [],
+            failedTenantIds: [],
+            healthChecks: [
+              { id: "h_success", label: "Backup success rate >=95%", status: "pending" },
+              { id: "h_alarm", label: "Alarms triggered", status: "pending" },
+              { id: "h_compliance", label: "Compliance posture", status: "pending" },
+              { id: "h_observe", label: "Observation period", status: "pending" },
+            ],
+          },
+          {
+            phase: "staged",
+            tenantIds: stagedIds,
+            observationHours: 48,
+            status: "pending",
+            migratedTenantIds: [],
+            failedTenantIds: [],
+            healthChecks: [],
+          },
+          {
+            phase: "fleet",
+            tenantIds: fleetIds,
+            observationHours: 0,
+            status: "pending",
+            migratedTenantIds: [],
+            failedTenantIds: [],
+            healthChecks: [],
+          },
+        ],
+      };
+      return {
+        policyTemplateRollouts: [rollout, ...s.policyTemplateRollouts],
+        policyTemplateAudit: [
+          {
+            id: makeAuditId("ptaud"),
+            templateId,
+            occurredAt: now,
+            actor: operatorName,
+            actorRole: "MSP Admin",
+            action: "template.rollout.start" as PolicyTemplateAuditAction,
+            targetVersion: template.currentVersion,
+            description: `Rollout started: v${fromVersion} to v${template.currentVersion}, ${tenantsByCapacity.length} tenants affected. Note: ${note}`,
+            outcome: "success",
+          },
+          ...s.policyTemplateAudit,
+        ],
+      };
+    });
+    return id;
+  },
+
+  promoteRolloutPhase: (rolloutId, operatorName) =>
+    set((s) => {
+      const rollout = s.policyTemplateRollouts.find((r) => r.id === rolloutId);
+      if (!rollout) return {};
+      const phaseOrder: RolloutPhase[] = ["canary", "staged", "fleet"];
+      const currentIdx = phaseOrder.findIndex((p) => p === rollout.currentPhase);
+      if (currentIdx === -1) return {};
+      const now = new Date().toISOString();
+      const completedPhase = {
+        ...rollout.phases[currentIdx],
+        status: "complete" as const,
+        completedAt: now,
+        migratedTenantIds: rollout.phases[currentIdx].tenantIds,
+      };
+      const nextIdx = currentIdx + 1;
+      let updatedRollout: PolicyTemplateRollout;
+      if (nextIdx >= rollout.phases.length || rollout.phases[nextIdx].tenantIds.length === 0) {
+        updatedRollout = {
+          ...rollout,
+          status: "complete",
+          completedAt: now,
+          currentPhase: null,
+          phases: rollout.phases.map((p, i) => (i === currentIdx ? completedPhase : p)),
+        };
+      } else {
+        const nextPhase = {
+          ...rollout.phases[nextIdx],
+          status: "running" as const,
+          startedAt: now,
+          healthChecks: [
+            { id: "h_success", label: "Backup success rate >=95%", status: "pending" as const },
+            { id: "h_alarm", label: "Alarms triggered", status: "pending" as const },
+            { id: "h_compliance", label: "Compliance posture", status: "pending" as const },
+          ],
+        };
+        updatedRollout = {
+          ...rollout,
+          currentPhase: phaseOrder[nextIdx],
+          phases: rollout.phases.map((p, i) =>
+            i === currentIdx ? completedPhase : i === nextIdx ? nextPhase : p,
+          ),
+        };
+      }
+      const newAssignments = s.policyTemplateAssignments.map((a) => {
+        if (
+          a.templateId === rollout.templateId &&
+          completedPhase.tenantIds.includes(a.tenantId)
+        ) {
+          return { ...a, appliedVersion: rollout.toVersion, appliedAt: now, appliedBy: operatorName };
+        }
+        return a;
+      });
+      return {
+        policyTemplateRollouts: s.policyTemplateRollouts.map((r) =>
+          r.id === rolloutId ? updatedRollout : r,
+        ),
+        policyTemplateAssignments: newAssignments,
+        policyTemplateAudit: [
+          {
+            id: makeAuditId("ptaud"),
+            templateId: rollout.templateId,
+            occurredAt: now,
+            actor: operatorName,
+            actorRole: "MSP Admin",
+            action:
+              updatedRollout.status === "complete"
+                ? ("template.rollout.complete" as PolicyTemplateAuditAction)
+                : ("template.rollout.promote" as PolicyTemplateAuditAction),
+            targetVersion: rollout.toVersion,
+            description:
+              updatedRollout.status === "complete"
+                ? `Rollout complete: ${rollout.totalAffectedTenants} tenants migrated to v${rollout.toVersion}`
+                : `Promoted to ${updatedRollout.currentPhase} phase`,
+            outcome: "success",
+          },
+          ...s.policyTemplateAudit,
+        ],
+      };
+    }),
+
+  pausePolicyRollout: (rolloutId, operatorName) =>
+    set((s) => ({
+      policyTemplateRollouts: s.policyTemplateRollouts.map((r) =>
+        r.id === rolloutId ? { ...r, status: "paused" } : r,
+      ),
+      policyTemplateAudit: [
+        {
+          id: makeAuditId("ptaud"),
+          templateId:
+            s.policyTemplateRollouts.find((r) => r.id === rolloutId)?.templateId ?? "",
+          occurredAt: new Date().toISOString(),
+          actor: operatorName,
+          actorRole: "MSP Admin",
+          action: "template.rollout.start" as PolicyTemplateAuditAction,
+          description: "Rollout paused by operator",
+          outcome: "success",
+        },
+        ...s.policyTemplateAudit,
+      ],
+    })),
+
+  abortPolicyRollout: (rolloutId, reason, operatorName) =>
+    set((s) => {
+      const rollout = s.policyTemplateRollouts.find((r) => r.id === rolloutId);
+      if (!rollout) return {};
+      const now = new Date().toISOString();
+      const migratedSoFar = rollout.phases.flatMap((p) => p.migratedTenantIds);
+      const restoredAssignments = s.policyTemplateAssignments.map((a) => {
+        if (
+          a.templateId === rollout.templateId &&
+          migratedSoFar.includes(a.tenantId) &&
+          rollout.fromVersion !== null
+        ) {
+          return { ...a, appliedVersion: rollout.fromVersion, appliedAt: now, appliedBy: operatorName };
+        }
+        return a;
+      });
+      return {
+        policyTemplateRollouts: s.policyTemplateRollouts.map((r) =>
+          r.id === rolloutId
+            ? {
+                ...r,
+                status: "rolled-back",
+                abortedAt: now,
+                abortReason: reason,
+                currentPhase: null,
+              }
+            : r,
+        ),
+        policyTemplateAssignments: restoredAssignments,
+        policyTemplateAudit: [
+          {
+            id: makeAuditId("ptaud"),
+            templateId: rollout.templateId,
+            occurredAt: now,
+            actor: operatorName,
+            actorRole: "MSP Admin",
+            action: "template.rollout.abort" as PolicyTemplateAuditAction,
+            targetVersion: rollout.toVersion,
+            description: `Rollout aborted. ${migratedSoFar.length} tenants restored to v${rollout.fromVersion}. Reason: ${reason}`,
+            outcome: "success",
+          },
+          ...s.policyTemplateAudit,
+        ],
+      };
+    }),
+
+  completePolicyRollout: (rolloutId, operatorName) =>
+    set((s) => {
+      const rollout = s.policyTemplateRollouts.find((r) => r.id === rolloutId);
+      if (!rollout) return {};
+      const now = new Date().toISOString();
+      const allTenantIds = rollout.phases.flatMap((p) => p.tenantIds);
+      const updatedAssignments = s.policyTemplateAssignments.map((a) => {
+        if (a.templateId === rollout.templateId && allTenantIds.includes(a.tenantId)) {
+          return { ...a, appliedVersion: rollout.toVersion, appliedAt: now, appliedBy: operatorName };
+        }
+        return a;
+      });
+      return {
+        policyTemplateRollouts: s.policyTemplateRollouts.map((r) =>
+          r.id === rolloutId
+            ? { ...r, status: "complete", completedAt: now, currentPhase: null }
+            : r,
+        ),
+        policyTemplateAssignments: updatedAssignments,
+        policyTemplateAudit: [
+          {
+            id: makeAuditId("ptaud"),
+            templateId: rollout.templateId,
+            occurredAt: now,
+            actor: operatorName,
+            actorRole: "MSP Admin",
+            action: "template.rollout.complete" as PolicyTemplateAuditAction,
+            targetVersion: rollout.toVersion,
+            description: `Rollout complete: ${allTenantIds.length} tenants migrated to v${rollout.toVersion}`,
+            outcome: "success",
+          },
+          ...s.policyTemplateAudit,
+        ],
+      };
+    }),
+
+  applyPolicyTemplateToTenant: (templateId, tenantId, version, operatorName) =>
+    set((s) => {
+      const now = new Date().toISOString();
+      const existing = s.policyTemplateAssignments.find(
+        (a) => a.tenantId === tenantId,
+      );
+      const next: TenantTemplateAssignment = {
+        tenantId,
+        templateId,
+        appliedVersion: version,
+        appliedAt: now,
+        appliedBy: operatorName,
+      };
+      const tenant = s.tenants.find((t) => t.id === tenantId);
+      const template = s.policyTemplates.find((t) => t.id === templateId);
+      return {
+        policyTemplateAssignments: existing
+          ? s.policyTemplateAssignments.map((a) =>
+              a.tenantId === tenantId ? next : a,
+            )
+          : [...s.policyTemplateAssignments, next],
+        policyTemplateAudit: [
+          {
+            id: makeAuditId("ptaud"),
+            templateId,
+            occurredAt: now,
+            actor: operatorName,
+            actorRole: "MSP Admin",
+            action: "template.tenant.apply" as PolicyTemplateAuditAction,
+            targetVersion: version,
+            description: `${template?.name ?? templateId} v${version} applied to ${tenant?.name ?? tenantId}`,
+            outcome: "success",
+          },
+          ...s.policyTemplateAudit,
+        ],
+      };
+    }),
+
+  removePolicyTemplateFromTenant: (templateId, tenantId, operatorName) =>
+    set((s) => {
+      const tenant = s.tenants.find((t) => t.id === tenantId);
+      const template = s.policyTemplates.find((t) => t.id === templateId);
+      return {
+        policyTemplateAssignments: s.policyTemplateAssignments.filter(
+          (a) => !(a.tenantId === tenantId && a.templateId === templateId),
+        ),
+        policyTemplateOverrides: s.policyTemplateOverrides.filter(
+          (o) => !(o.tenantId === tenantId && o.templateId === templateId),
+        ),
+        policyTemplateAudit: [
+          {
+            id: makeAuditId("ptaud"),
+            templateId,
+            occurredAt: new Date().toISOString(),
+            actor: operatorName,
+            actorRole: "MSP Admin",
+            action: "template.tenant.remove" as PolicyTemplateAuditAction,
+            description: `${template?.name ?? templateId} unassigned from ${tenant?.name ?? tenantId}`,
+            outcome: "success",
+          },
+          ...s.policyTemplateAudit,
+        ],
+      };
+    }),
+
+  addPolicyTemplateOverride: (override) =>
+    set((s) => {
+      const id = `ovr_${override.templateId}_${override.tenantId}_${Date.now().toString(36)}`;
+      const now = new Date().toISOString();
+      const tenant = s.tenants.find((t) => t.id === override.tenantId);
+      return {
+        policyTemplateOverrides: [
+          ...s.policyTemplateOverrides,
+          { ...override, id, appliedAt: now },
+        ],
+        policyTemplateAudit: [
+          {
+            id: makeAuditId("ptaud"),
+            templateId: override.templateId,
+            occurredAt: now,
+            actor: override.appliedBy,
+            actorRole: "MSP Admin",
+            action: "template.override.add" as PolicyTemplateAuditAction,
+            description: `Override on ${override.fieldLabel} for ${tenant?.name ?? override.tenantId}: ${override.templateValue} to ${override.overrideValue}. Reason: ${override.reason}`,
+            outcome: "success",
+          },
+          ...s.policyTemplateAudit,
+        ],
+      };
+    }),
+
+  removePolicyTemplateOverride: (overrideId, operatorName) =>
+    set((s) => {
+      const override = s.policyTemplateOverrides.find((o) => o.id === overrideId);
+      if (!override) return {};
+      const tenant = s.tenants.find((t) => t.id === override.tenantId);
+      return {
+        policyTemplateOverrides: s.policyTemplateOverrides.filter((o) => o.id !== overrideId),
+        policyTemplateAudit: [
+          {
+            id: makeAuditId("ptaud"),
+            templateId: override.templateId,
+            occurredAt: new Date().toISOString(),
+            actor: operatorName,
+            actorRole: "MSP Admin",
+            action: "template.override.remove" as PolicyTemplateAuditAction,
+            description: `Override removed: ${override.fieldLabel} for ${tenant?.name ?? override.tenantId} restored to template default`,
+            outcome: "success",
+          },
+          ...s.policyTemplateAudit,
+        ],
+      };
+    }),
 }));

@@ -16,6 +16,7 @@ import {
   Sheet,
   SheetContent,
   SheetHeader,
+  SheetTitle,
 } from "@/components/ui/sheet";
 import { useConsoleStore } from "@/lib/store";
 import { formatRelativeTime } from "@/lib/formatters";
@@ -52,9 +53,9 @@ export function ScheduleSheet({
         <SheetHeader className="border-b border-border-subtle p-6">
           <div className="flex items-start justify-between">
             <div>
-              <h2 className="text-[15px] font-semibold text-text-primary">
+              <SheetTitle className="text-[15px] font-semibold text-text-primary">
                 Continuous Assessment Schedule
-              </h2>
+              </SheetTitle>
               <p className="mt-0.5 text-[12px] text-text-secondary">
                 Configure how often each isolation control is re-verified.
               </p>

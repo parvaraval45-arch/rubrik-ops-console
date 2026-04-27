@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { format, parseISO } from "date-fns";
 import { Check } from "lucide-react";
 import {
@@ -96,7 +97,16 @@ export function RecentActivity({ events }: { events: AuditEvent[] }) {
                   {format(parseISO(e.occurredAt), "MMM d · HH:mm")}
                 </TableCell>
                 <TableCell className="text-text-primary">
-                  {e.target}
+                  {e.tenantId ? (
+                    <Link
+                      href={`/tenants/${e.tenantId}`}
+                      className="underline-offset-2 hover:text-brand-primary-hover hover:underline"
+                    >
+                      {e.target}
+                    </Link>
+                  ) : (
+                    e.target
+                  )}
                 </TableCell>
                 <TableCell>
                   <Badge

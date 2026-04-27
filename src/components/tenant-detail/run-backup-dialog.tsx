@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
+import { feedback } from "@/lib/feedback";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -54,24 +55,19 @@ export function RunBackupDialog({
 
   const tenantSuspended = tenant.status === "Suspended";
 
-  const onConfirm = () => {
-    if (!workloadId) return;
-    if (tenantSuspended) {
-      toast.error("Cannot run backup: tenant suspended.");
-      return;
-    }
-    const workload = workloads.find((w) => w.id === workloadId);
+  const runBackup = (workloadIdToRun: string) => {
+    const workload = workloads.find((w) => w.id === workloadIdToRun);
     if (!workload) return;
-    onOpenChange(false);
-    const jobId = enqueueBackup(tenant.id, workloadId, currentOperator.name);
+    const jobId = enqueueBackup(tenant.id, workloadIdToRun, currentOperator.name);
     const tid = toast.loading(`Backup queued: ${workload.name}`, {
       description: "Job will start within a few seconds…",
     });
     let cancelled = false;
-    const willFail = Math.random() < 0.05;
+    let willFail = false;
 
     setTimeout(() => {
       if (cancelled) return;
+      willFail = Math.random() < 0.05;
       updateJobProgress(tenant.id, jobId, 5);
     }, 500);
 
@@ -120,14 +116,15 @@ export function RunBackupDialog({
           willFail ? "Repository connection timeout" : undefined,
         );
         if (willFail) {
-          toast.error(`Backup failed: ${workload.name}`, {
-            id: tid,
-            description: "See alarm for details. Retry from Backups tab.",
+          toast.dismiss(tid);
+          feedback.error(`Backup failed: ${workload.name}`, {
+            description: "Repository connection timeout (rsc-repo-east-04).",
+            retry: () => runBackup(workloadIdToRun),
           });
         } else {
           const seconds = 6 + Math.round(Math.random() * 14);
-          toast.success(`Backup complete: ${workload.name}`, {
-            id: tid,
+          toast.dismiss(tid);
+          feedback.success(`Backup complete: ${workload.name}`, {
             description: `${formatDuration(seconds * 60)} · ${workload.sizeTB.toFixed(1)} TB protected`,
           });
         }
@@ -138,6 +135,18 @@ export function RunBackupDialog({
     return () => {
       cancelled = true;
     };
+  };
+
+  const onConfirm = () => {
+    if (!workloadId) return;
+    if (tenantSuspended) {
+      feedback.warning("Cannot run backup", {
+        description: "Tenant is suspended. Resume the tenant before queuing new backups.",
+      });
+      return;
+    }
+    onOpenChange(false);
+    runBackup(workloadId);
   };
 
   return (

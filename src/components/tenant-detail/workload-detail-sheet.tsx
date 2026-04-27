@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
 import {
   CheckCircle2,
@@ -49,16 +49,29 @@ export function WorkloadDetailSheet({
   open,
   onOpenChange,
 }: WorkloadDetailSheetProps) {
-  const restorePoints = useConsoleStore((s) =>
-    workload ? (s.restorePoints[tenant.id] ?? []).filter((rp) => rp.workloadId === workload.id) : [],
+  // Read raw arrays from the store so selectors stay reference-stable; derive
+  // filtered subsets in useMemo. Calling .filter() / .slice() inside the
+  // selector body returns a fresh array on every render and trips Zustand's
+  // getServerSnapshot infinite-loop guard.
+  const allRestorePoints = useConsoleStore((s) => s.restorePoints[tenant.id]);
+  const allJobs = useConsoleStore((s) => s.jobs[tenant.id]);
+  const policyAssignment = useConsoleStore(
+    (s) => s.policyAssignments[tenant.id],
   );
-  const jobs = useConsoleStore((s) =>
-    workload ? (s.jobs[tenant.id] ?? []).filter((j) => j.workloadId === workload.id).slice(0, 30) : [],
-  );
+
+  const restorePoints = useMemo(() => {
+    if (!workload || !allRestorePoints) return [];
+    return allRestorePoints.filter((rp) => rp.workloadId === workload.id);
+  }, [workload, allRestorePoints]);
+
+  const jobs = useMemo(() => {
+    if (!workload || !allJobs) return [];
+    return allJobs
+      .filter((j) => j.workloadId === workload.id)
+      .slice(0, 30);
+  }, [workload, allJobs]);
+
   const policy = mockData.policies.find((p) => p.id === workload?.policyId);
-  const policyAssignment = useConsoleStore((s) =>
-    workload ? s.policyAssignments[tenant.id] : undefined,
-  );
 
   const [tab, setTab] = useState("restore");
 

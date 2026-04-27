@@ -29,6 +29,7 @@ import {
   YAxis,
 } from "recharts";
 import { toast } from "sonner";
+import { VisuallyHidden } from "radix-ui";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -88,7 +89,11 @@ export function TenantBillingSheet({
   if (!lineItem) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent className="w-full p-0 sm:max-w-[580px]" />
+        <SheetContent className="w-full p-0 sm:max-w-[580px]">
+          <VisuallyHidden.Root>
+            <SheetTitle>Tenant billing detail</SheetTitle>
+          </VisuallyHidden.Root>
+        </SheetContent>
       </Sheet>
     );
   }
@@ -112,16 +117,22 @@ export function TenantBillingSheet({
                 {lineItem.status}
               </Badge>
               <SheetTitle className="text-[16px] font-semibold text-text-primary">
-                {lineItem.tenantName}
+                <Link
+                  href={`/tenants/${lineItem.tenantId}?tab=capacity`}
+                  className="underline-offset-2 hover:text-brand-primary-hover hover:underline"
+                >
+                  {lineItem.tenantName}
+                </Link>
               </SheetTitle>
               <SheetDescription className="text-[12px] text-text-tertiary">
                 Period: April 2026 · Total {formatCurrency(lineItem.totalCharge)}
               </SheetDescription>
               <Link
-                href={`/tenants/${lineItem.tenantId}`}
-                className="mt-1 w-fit text-[11.5px] text-brand-primary-hover hover:underline"
+                href={`/tenants/${lineItem.tenantId}?tab=capacity`}
+                className="mt-1 inline-flex w-fit items-center gap-1 text-[11.5px] font-medium text-brand-primary-hover underline-offset-2 hover:underline"
               >
-                Open tenant detail →
+                View tenant
+                <span aria-hidden>&rarr;</span>
               </Link>
             </div>
             <button

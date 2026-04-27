@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import type { ReactNode } from "react";
 import { Activity, Building2, Cpu, ShieldAlert, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -114,7 +116,23 @@ export function AlertDetailSheet({
             </SheetHeader>
 
             <div className="flex-1 space-y-6 p-6">
-              <DetailRow icon={Building2} label="Tenant" value={tenant?.name ?? "—"} />
+              <DetailRow
+                icon={Building2}
+                label="Tenant"
+                value={
+                  tenant ? (
+                    <Link
+                      href={`/tenants/${tenant.id}`}
+                      onClick={() => onOpenChange(false)}
+                      className="text-text-primary underline-offset-2 hover:text-brand-primary-hover hover:underline"
+                    >
+                      {tenant.name}
+                    </Link>
+                  ) : (
+                    "—"
+                  )
+                }
+              />
               <DetailRow icon={ShieldAlert} label="Detection type" value={alert.category} />
               <DetailRow
                 icon={Activity}
@@ -180,7 +198,7 @@ function DetailRow({
 }: {
   icon: typeof Building2;
   label: string;
-  value: string;
+  value: ReactNode;
   hydrationSafe?: boolean;
 }) {
   return (

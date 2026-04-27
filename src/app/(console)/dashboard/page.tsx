@@ -108,6 +108,8 @@ const FEATURED_ALERTS: FeaturedAlertSpec[] = [
 
 export default function DashboardPage() {
   const tenants = useConsoleStore((s) => s.tenants);
+  const alerts = useConsoleStore((s) => s.alerts);
+  const securityThreats = useConsoleStore((s) => s.securityThreats);
   const auditEvents = useConsoleStore((s) => s.auditEvents);
 
   const [range, setRange] = useState<DateRange>("7d");
@@ -116,98 +118,154 @@ export default function DashboardPage() {
     const mult = RANGE_MULTIPLIER[range];
     const deltaMult = RANGE_DELTA_MULTIPLIER[range];
 
+    const activeTenants = tenants.filter((t) => t.status !== "Churned");
     const protectedTotalTB = tenants.reduce((s, t) => s + t.capacityUsedTB, 0);
     const allocatedTotalTB = tenants.reduce(
       (s, t) => s + t.capacityCommittedTB,
       0,
     );
 
+    const protectedPB = protectedTotalTB / 1024;
+
+    // Backup success — fleet average across each tenant's last 7 days
+    const backupSuccessAvg =
+      activeTenants.length === 0
+        ? 0
+        : activeTenants
+            .map((t) => {
+              const arr = t.backupSuccess7d;
+              if (!arr || arr.length === 0) return 100;
+              return arr.reduce((sum, v) => sum + v, 0) / arr.length;
+            })
+            .reduce((sum, v) => sum + v, 0) / activeTenants.length;
+
+    // SLA — weighted by capacity used (bigger tenants count more)
+    const totalWeight = activeTenants.reduce(
+      (s, t) => s + Math.max(1, t.capacityUsedTB),
+      0,
+    );
+    const slaWeighted =
+      totalWeight === 0
+        ? 0
+        : activeTenants.reduce(
+            (s, t) =>
+              s + t.slaCompliance * Math.max(1, t.capacityUsedTB),
+            0,
+          ) / totalWeight;
+
+    const openAlerts = alerts.filter((a) => a.status === "open").length;
+    const criticalOpenAlerts = alerts.filter(
+      (a) => a.status === "open" && a.severity === "critical",
+    ).length;
+
+    const openIncidents = securityThreats.filter(
+      (t) => t.status === "Investigating" || t.status === "Contained",
+    ).length;
+
+    // Tenants growth proxy: count Onboarding (in-flight) as the recent additions
+    const onboardingCount = tenants.filter((t) => t.status === "Onboarding").length;
+
     const kpis: KpiCardProps[] = [
       {
         index: 0,
         label: "Total Tenants",
-        value: tenants.length.toString(),
-        delta: `+${Math.round(3 * deltaMult)} vs prior`,
-        deltaTone: "positive",
-        deltaDirection: "up",
-        sparkline: curve(0.3, 12, 60, 1.6).map((v, i) => v + i * 0.16),
+        value: activeTenants.length.toString(),
+        delta: `+${onboardingCount} in onboarding`,
+        deltaTone: onboardingCount > 0 ? "positive" : "neutral",
+        deltaDirection: onboardingCount > 0 ? "up" : undefined,
+        sparkline: curve(0.3, 12, 60, 1.6).map(
+          (v, i) => v + i * 0.16 * (activeTenants.length / 60),
+        ),
         href: "/tenants",
       },
       {
         index: 1,
         label: "Active Alerts",
-        value: Math.round(81 * (range === "7d" ? 1 : range === "30d" ? 1.16 : 1.32)).toString(),
-        delta: `+${Math.round(18 * deltaMult)} critical`,
-        deltaTone: "negative",
-        deltaDirection: "up",
-        sparkline: curve(1.1, 12, 60, 12).map((v, i) => v + i * 0.6),
+        value: openAlerts.toString(),
+        delta: `${criticalOpenAlerts} critical`,
+        deltaTone: criticalOpenAlerts > 0 ? "negative" : "positive",
+        deltaDirection: criticalOpenAlerts > 0 ? "up" : "down",
+        sparkline: curve(1.1, 12, openAlerts, Math.max(4, openAlerts * 0.15)),
         href: "/security",
       },
       {
         index: 2,
         label: "Backup Success",
-        value: formatPercent(94.2),
+        value: formatPercent(backupSuccessAvg),
         delta: `+${(1.2 * deltaMult).toFixed(1)}% vs prior`,
         deltaTone: "positive",
         deltaDirection: "up",
-        sparkline: curve(2.4, 12, 95, 0.8),
+        sparkline: curve(2.4, 12, backupSuccessAvg, 0.8),
         href: "/tenants",
       },
       {
         index: 3,
         label: "Protected Capacity",
-        value: `${(2.0 * mult).toFixed(1)} PB`,
-        delta: `+${Math.round(12 * deltaMult)} TB`,
+        value: protectedPB >= 1
+          ? `${protectedPB.toFixed(2)} PB`
+          : `${protectedTotalTB.toFixed(0)} TB`,
+        delta: `${formatTB(allocatedTotalTB - protectedTotalTB)} headroom`,
         deltaTone: "positive",
-        deltaDirection: "up",
-        sparkline: curve(3.2, 12, 1900, 22).map((v, i) => v + i * 4 * mult),
+        deltaDirection: undefined,
+        sparkline: curve(3.2, 12, protectedTotalTB, protectedTotalTB * 0.02).map(
+          (v, i) => v + i * 4 * mult,
+        ),
         href: "/capacity",
       },
       {
         index: 4,
         label: "SLA Compliance",
-        value: formatPercent(96.8),
+        value: formatPercent(slaWeighted),
         delta: `-${(0.4 * deltaMult).toFixed(1)}% vs prior`,
         deltaTone: "negative",
         deltaDirection: "down",
-        sparkline: curve(4.1, 12, 97, 0.6).map((v, i) => v - i * 0.04),
+        sparkline: curve(4.1, 12, slaWeighted, 0.6).map((v, i) => v - i * 0.04),
         href: "/security",
       },
       {
         index: 5,
         label: "Open Incidents",
-        value: Math.round(18 * (range === "7d" ? 1 : range === "30d" ? 1.22 : 1.55)).toString(),
+        value: openIncidents.toString(),
         delta: `-${Math.max(2, Math.round(2 * deltaMult))} vs prior`,
         deltaTone: "positive",
         deltaDirection: "down",
-        sparkline: curve(5.7, 12, 22, 4).map((v, i) => v - i * 0.4),
+        sparkline: curve(5.7, 12, Math.max(4, openIncidents), 4).map(
+          (v, i) => v - i * 0.4,
+        ),
         href: "/security",
       },
     ];
 
-    // Demo-narrative status distribution — 56/2/0/4 totals 62, matching the strategy doc.
+    // Status distribution computed from the live tenants array.
+    const statusCounts = {
+      Active: tenants.filter((t) => t.status === "Active").length,
+      Onboarding: tenants.filter((t) => t.status === "Onboarding").length,
+      Suspended: tenants.filter((t) => t.status === "Suspended").length,
+      Churned: tenants.filter((t) => t.status === "Churned").length,
+    } as const;
+
     const donut = [
       {
         status: "Active" as const,
-        value: 56,
+        value: statusCounts.Active,
         color: "var(--brand-primary)",
         href: "/tenants?status=Active",
       },
       {
         status: "Onboarding" as const,
-        value: 2,
+        value: statusCounts.Onboarding,
         color: "var(--status-info)",
         href: "/tenants?status=Onboarding",
       },
       {
         status: "Suspended" as const,
-        value: 0,
+        value: statusCounts.Suspended,
         color: "var(--text-tertiary)",
         href: "/tenants?status=Suspended",
       },
       {
         status: "Churned" as const,
-        value: 4,
+        value: statusCounts.Churned,
         color: "var(--status-critical)",
         href: "/tenants?status=Churned",
       },
@@ -272,7 +330,7 @@ export default function DashboardPage() {
       protectedTotalTB,
       allocatedTotalTB,
     };
-  }, [tenants, auditEvents, range]);
+  }, [tenants, alerts, securityThreats, auditEvents, range]);
 
   const onExport = () => {
     const filename = `platform-overview-${format(new Date(), "yyyy-MM-dd")}.pdf`;
@@ -291,7 +349,7 @@ export default function DashboardPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Platform Overview"
-        description={`Real-time view across ${tenants.length} tenants`}
+        description={`Real-time view across ${tenants.filter((t) => t.status !== "Churned").length} tenants`}
         actions={
           <div className="flex items-center gap-3">
             <DateRangePills value={range} onChange={setRange} />

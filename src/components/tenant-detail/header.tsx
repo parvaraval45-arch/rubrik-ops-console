@@ -175,10 +175,12 @@ export function TenantHeader({ tenant, workloads }: TenantHeaderProps) {
               <DropdownMenuItem
                 className="gap-2"
                 onSelect={() => {
-                  toast.loading("Generating attestation report…");
+                  const tid = toast.loading("Generating attestation report…");
                   setTimeout(() => {
                     toast.success("Attestation ready", {
-                      description: `Downloaded as attestation-${tenant.namespaceId}.pdf`,
+                      id: tid,
+                      duration: 4000,
+                      description: `Compiled across ${tenant.workloadCount} workloads.`,
                     });
                   }, 1100);
                 }}

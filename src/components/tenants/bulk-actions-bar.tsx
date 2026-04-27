@@ -12,6 +12,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
+import { feedback } from "@/lib/feedback";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -57,6 +58,7 @@ interface BulkActionsBarProps {
 
 export function BulkActionsBar({ selected, onClearSelection }: BulkActionsBarProps) {
   const bulkSuspend = useConsoleStore((s) => s.bulkSuspendTenants);
+  const resumeTenant = useConsoleStore((s) => s.resumeTenant);
   const bulkApplyPolicy = useConsoleStore((s) => s.bulkApplyPolicy);
   const bulkChangeTier = useConsoleStore((s) => s.bulkChangeTier);
   const bulkAddTag = useConsoleStore((s) => s.bulkAddTag);
@@ -216,10 +218,21 @@ export function BulkActionsBar({ selected, onClearSelection }: BulkActionsBarPro
             selected={selected}
             onCancel={() => setSuspendOpen(false)}
             onConfirm={(reason, resumeDate) => {
-              bulkSuspend(selected.map((t) => t.id), currentOperator.name, reason, resumeDate);
-              toast.success(`${selected.length} tenants suspended.`, {
-                description: "Tenant admins notified by email.",
-              });
+              const ids = selected.map((t) => t.id);
+              const count = ids.length;
+              bulkSuspend(ids, currentOperator.name, reason, resumeDate);
+              feedback.destructive(
+                `${count} tenant${count === 1 ? "" : "s"} suspended`,
+                {
+                  description: "Tenant admins notified by email.",
+                  undo: () => {
+                    for (const id of ids) resumeTenant(id);
+                    feedback.info("Suspension undone", {
+                      description: `${count} tenant${count === 1 ? "" : "s"} restored to active.`,
+                    });
+                  },
+                },
+              );
               setSuspendOpen(false);
               onClearSelection();
             }}

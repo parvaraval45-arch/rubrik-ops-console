@@ -229,13 +229,14 @@ function FilterDropdown({
             const checked = selected.includes(opt.value);
             return (
               <li key={opt.value}>
-                <button
-                  type="button"
-                  onClick={() => onToggle(opt.value)}
-                  className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] hover:bg-secondary"
+                <label
+                  className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] hover:bg-secondary"
                 >
                   <span className="flex items-center gap-2">
-                    <Checkbox checked={checked} />
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={() => onToggle(opt.value)}
+                    />
                     <span className="text-text-primary">{opt.label ?? opt.value}</span>
                   </span>
                   {typeof opt.count === "number" ? (
@@ -243,7 +244,7 @@ function FilterDropdown({
                       {opt.count}
                     </span>
                   ) : null}
-                </button>
+                </label>
               </li>
             );
           })}

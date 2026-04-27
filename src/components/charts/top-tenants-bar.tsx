@@ -43,7 +43,7 @@ export function TopTenantsBar({ data }: { data: TopTenantBarRow[] }) {
               | { activePayload?: Array<{ payload?: TopTenantBarRow }> }
               | undefined;
             const payload = s?.activePayload?.[0]?.payload;
-            if (payload?.tenantId) router.push(`/tenants/${payload.tenantId}`);
+            if (payload?.tenantId) router.push(`/tenants/${payload.tenantId}?tab=capacity`);
           }}
         >
           <CartesianGrid
@@ -77,7 +77,7 @@ export function TopTenantsBar({ data }: { data: TopTenantBarRow[] }) {
               return (
                 <ChartTooltip
                   title={row.name}
-                  subtitle="Click to open tenant"
+                  subtitle="Click to open tenant capacity tab"
                   series={[
                     {
                       label: "Protected",

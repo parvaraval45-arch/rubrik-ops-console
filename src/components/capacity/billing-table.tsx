@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { type ColumnDef } from "@tanstack/react-table";
 import {
   CheckCircle2,
@@ -169,8 +170,14 @@ export function BillingTable({
         accessorKey: "tenantName",
         header: "Tenant",
         cell: ({ row }) => (
-          <div className="flex flex-col">
-            <span className="font-medium text-text-primary">{row.original.tenantName}</span>
+          <div className="flex flex-col" data-stop-row-click="true">
+            <Link
+              href={`/tenants/${row.original.tenantId}?tab=capacity`}
+              onClick={(e) => e.stopPropagation()}
+              className="font-medium text-text-primary underline-offset-2 hover:text-brand-primary-hover hover:underline"
+            >
+              {row.original.tenantName}
+            </Link>
             <span className="text-[11px] text-text-tertiary">{row.original.industry}</span>
           </div>
         ),

@@ -26,6 +26,12 @@ export default function SecurityPage() {
   const cells = useConsoleStore((s) => s.matrixCells);
   const schedule = useConsoleStore((s) => s.securitySchedule);
   const rerunPosture = useConsoleStore((s) => s.rerunPostureSweep);
+  const securityThreats = useConsoleStore((s) => s.securityThreats);
+  const keyRotation = useConsoleStore((s) => s.keyRotation);
+  const policyTemplates = useConsoleStore((s) => s.policyTemplates);
+  const policyTemplateAssignments = useConsoleStore(
+    (s) => s.policyTemplateAssignments,
+  );
 
   const [postureRunning, setPostureRunning] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -44,6 +50,68 @@ export default function SecurityPage() {
     return { failures, warnings, passing, score };
   }, [cells]);
 
+  const kpiStats = useMemo(() => {
+    const activeTenants = tenants.filter((t) => t.status !== "Churned");
+    const activeThreats = securityThreats.filter(
+      (t) => t.status === "Investigating" || t.status === "Contained",
+    ).length;
+    const containedThreats = securityThreats.filter(
+      (t) => t.status === "Contained",
+    ).length;
+    const resolvedThreats = securityThreats.filter(
+      (t) => t.status === "Resolved",
+    ).length;
+
+    // MFA enforcement: tenants where security score >= 85 are treated as having
+    // strict tenant-side MFA enforcement enabled. Approximation, but derived
+    // from store rather than hardcoded.
+    const mfaEnforcedCount = activeTenants.filter(
+      (t) => t.securityScore >= 85,
+    ).length;
+
+    // Encryption coverage: tenants with an active GCM-class key rotation entry.
+    const tenantsWithEncryption = activeTenants.filter((t) => {
+      const k = keyRotation[t.id];
+      return k && k.algorithm === "AES-256-GCM";
+    }).length;
+    const encryptionCoverage =
+      activeTenants.length === 0
+        ? 0
+        : Math.round((tenantsWithEncryption / activeTenants.length) * 100);
+
+    // Immutability coverage: tenants assigned to a template whose current
+    // version has a Compliance lock enabled.
+    const immutableTenantIds = new Set<string>();
+    for (const a of policyTemplateAssignments) {
+      const tpl = policyTemplates.find((p) => p.id === a.templateId);
+      if (!tpl) continue;
+      const v = tpl.versions.find((x) => x.version === a.appliedVersion);
+      if (v && v.config.immutabilityLockType === "Compliance") {
+        immutableTenantIds.add(a.tenantId);
+      }
+    }
+    const immutabilityCoverage =
+      activeTenants.length === 0
+        ? 0
+        : Math.round((immutableTenantIds.size / activeTenants.length) * 100);
+
+    return {
+      activeTenantCount: activeTenants.length,
+      activeThreats,
+      containedThreats,
+      resolvedThreats,
+      mfaEnforcedCount,
+      encryptionCoverage,
+      immutabilityCoverage,
+    };
+  }, [
+    tenants,
+    securityThreats,
+    keyRotation,
+    policyTemplates,
+    policyTemplateAssignments,
+  ]);
+
   const kpis: SecurityKpi[] = [
     {
       label: "Isolation Violations",
@@ -52,39 +120,62 @@ export default function SecurityPage() {
       subtitle: stats.failures > 0 ? "Should be 0" : "All clear",
       trend:
         stats.failures > 0
-          ? { direction: "up", tone: "negative", label: "+3 vs last assessment" }
+          ? { direction: "up", tone: "negative", label: `${stats.warnings} warnings also active` }
           : { direction: "down", tone: "positive", label: "All controls passing" },
       onClick: () => setMatrixViewKey((k) => k + 1),
     },
     {
       label: "Anomalies Detected (24h)",
-      value: "3",
-      valueTone: "default",
+      value: kpiStats.activeThreats.toString(),
+      valueTone: kpiStats.activeThreats > 0 ? "default" : "success",
       subtitle: "Active threats under investigation",
-      trend: { direction: "neutral", tone: "neutral", label: "2 contained, 1 resolved" },
+      trend: {
+        direction: "neutral",
+        tone: "neutral",
+        label: `${kpiStats.containedThreats} contained, ${kpiStats.resolvedThreats} resolved`,
+      },
     },
     {
       label: "MFA Enforced",
-      value: "43 / 56",
-      valueTone: "warning",
+      value: `${kpiStats.mfaEnforcedCount} / ${kpiStats.activeTenantCount}`,
+      valueTone:
+        kpiStats.mfaEnforcedCount === kpiStats.activeTenantCount
+          ? "success"
+          : "warning",
       subtitle: "Tenants with mandatory MFA",
-      trend: { direction: "neutral", tone: "neutral", label: "13 on optional — review at QBR" },
+      trend: {
+        direction: "neutral",
+        tone: "neutral",
+        label: `${kpiStats.activeTenantCount - kpiStats.mfaEnforcedCount} on optional — review at QBR`,
+      },
     },
     {
       label: "Encryption Coverage",
-      value: "94%",
-      valueTone: "success",
-      subtitle: "of all workloads",
-      progress: 94,
+      value: `${kpiStats.encryptionCoverage}%`,
+      valueTone: kpiStats.encryptionCoverage >= 90 ? "success" : "warning",
+      subtitle: "Tenants on AES-256-GCM",
+      progress: kpiStats.encryptionCoverage,
       trend: { direction: "up", tone: "positive", label: "+2% vs last quarter" },
     },
     {
       label: "Immutability Coverage",
-      value: "71%",
-      valueTone: "warning",
-      subtitle: "of all backups",
-      progress: 71,
-      trend: { direction: "neutral", tone: "neutral", label: "Below 80% target" },
+      value: `${kpiStats.immutabilityCoverage}%`,
+      valueTone:
+        kpiStats.immutabilityCoverage >= 80
+          ? "success"
+          : kpiStats.immutabilityCoverage >= 60
+            ? "warning"
+            : "critical",
+      subtitle: "Tenants under compliance lock",
+      progress: kpiStats.immutabilityCoverage,
+      trend: {
+        direction: "neutral",
+        tone: "neutral",
+        label:
+          kpiStats.immutabilityCoverage >= 80
+            ? "Above 80% target"
+            : "Below 80% target",
+      },
     },
   ];
 
@@ -94,7 +185,7 @@ export default function SecurityPage() {
       rerunPosture();
       setPostureRunning(false);
       toast.success("Posture check complete", {
-        description: "All 5 controls re-evaluated across 62 tenants.",
+        description: `All 5 controls re-evaluated across ${kpiStats.activeTenantCount} tenants.`,
       });
     }, 1_400);
   };

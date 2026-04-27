@@ -2377,6 +2377,9 @@ const directorySavedViews: DirectorySavedView[] = [
   },
 ];
 
+import { buildPolicyTemplates } from "./policy-templates-data";
+const policyTemplateBundle = buildPolicyTemplates(tenants);
+
 export const mockData = {
   tenants,
   policies,
@@ -2406,6 +2409,11 @@ export const mockData = {
   billingHistory,
   directorySavedViews,
   tenantTagCatalog: TENANT_TAG_CATALOG,
+  policyTemplates: policyTemplateBundle.templates,
+  policyTemplateAssignments: policyTemplateBundle.assignments,
+  policyTemplateOverrides: policyTemplateBundle.overrides,
+  policyTemplateRollouts: policyTemplateBundle.rollouts,
+  policyTemplateAudit: policyTemplateBundle.audit,
 };
 
 export const currentOperator: Operator = operators[0];

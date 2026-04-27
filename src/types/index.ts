@@ -870,3 +870,219 @@ export interface DirectorySavedView {
   density?: TenantDirectoryDensity;
   isSystem: boolean;
 }
+
+// ── Policy Template lifecycle (the /policies surface) ────────────────────────
+
+export type PolicyTemplateStatus = "Active" | "Draft" | "Deprecated";
+
+export type ComplianceFramework =
+  | "HIPAA"
+  | "SOX"
+  | "GDPR"
+  | "PCI-DSS"
+  | "NIST"
+  | "ISO-27001"
+  | "HITRUST"
+  | "FERPA"
+  | "FedRAMP";
+
+export type WorkloadCoverageType =
+  | "VM"
+  | "SQL"
+  | "M365"
+  | "NAS"
+  | "Oracle"
+  | "Kubernetes"
+  | "FileShare";
+
+export type RpoUnit = "minutes" | "hours" | "days";
+export type RetentionUnit = "days" | "months" | "years";
+export type LockType = "Compliance" | "Governance" | "None";
+export type ScheduleType = "Cron" | "Recurring" | "Continuous";
+export type EncryptionAlgorithm = "AES-256-GCM" | "AES-256-CBC";
+export type ReplicationMode = "Async" | "Sync" | "On-demand";
+export type AnomalySensitivity = "Low" | "Medium" | "High";
+export type NotificationTarget = "tenant-admin" | "msp-operator" | "compliance-team";
+export type NotificationChannel = "email" | "slack" | "teams" | "pagerduty";
+
+export interface PolicyTemplateConfig {
+  rpoValue: number;
+  rpoUnit: RpoUnit;
+  rtoValue: number;
+  rtoUnit: RpoUnit;
+  scheduleType: ScheduleType;
+  scheduleExpression: string;
+  scheduleHumanLabel: string;
+  retentionShortValue: number;
+  retentionShortUnit: RetentionUnit;
+  retentionLongValue: number;
+  retentionLongUnit: RetentionUnit;
+  hardDeleteAfterLongTerm: boolean;
+  primaryRepository: string;
+  archiveTier: string;
+  replicationRegions: Region[];
+  replicationMode: ReplicationMode;
+  encryptionAlgorithm: EncryptionAlgorithm;
+  keyManagement: "Rubrik-Managed" | "BYOK";
+  keyRotationDays: number;
+  immutabilityLockType: LockType;
+  immutabilityLockDays: number;
+  quorumOverride: boolean;
+  airGap: boolean;
+  crossTenantBlock: boolean;
+  complianceFrameworks: ComplianceFramework[];
+  attestationCadence: "Quarterly" | "Annual" | "Monthly";
+  anomalySensitivity: AnomalySensitivity;
+  massDeletionThresholdPerHour: number;
+  encryptionRateChangePct: number;
+  autoQuarantine: boolean;
+  notifyOnFailure: NotificationTarget[];
+  notifyOnDrift: NotificationTarget[];
+  notifyOnComplianceViolation: NotificationTarget[];
+  notificationChannels: NotificationChannel[];
+}
+
+export interface PolicyTemplateVersion {
+  id: string;
+  version: number;
+  authoredBy: string;
+  authoredAt: string;
+  changeSummary: string;
+  config: PolicyTemplateConfig;
+  migrationOutcome?: string;
+}
+
+export interface PolicyTemplateOverride {
+  id: string;
+  templateId: string;
+  tenantId: string;
+  field: keyof PolicyTemplateConfig;
+  fieldLabel: string;
+  templateValue: string;
+  overrideValue: string;
+  appliedBy: string;
+  appliedAt: string;
+  reason: string;
+}
+
+export interface TenantTemplateAssignment {
+  tenantId: string;
+  templateId: string;
+  appliedVersion: number;
+  appliedAt: string;
+  appliedBy: string;
+}
+
+export type RolloutStrategy =
+  | "canary-staged-fleet"
+  | "all-at-once"
+  | "manual-per-tenant";
+
+export type RolloutPhase = "canary" | "staged" | "fleet";
+
+export type RolloutPhaseStatus =
+  | "pending"
+  | "running"
+  | "observing"
+  | "ready-to-promote"
+  | "complete"
+  | "aborted";
+
+export type RolloutOverallStatus =
+  | "draft"
+  | "validating"
+  | "running"
+  | "paused"
+  | "complete"
+  | "aborted"
+  | "rolled-back";
+
+export interface RolloutHealthCheck {
+  id: string;
+  label: string;
+  status: "pass" | "warn" | "fail" | "pending";
+  detail?: string;
+}
+
+export interface RolloutPhasePlan {
+  phase: RolloutPhase;
+  tenantIds: string[];
+  observationHours: number;
+  status: RolloutPhaseStatus;
+  startedAt?: string;
+  completedAt?: string;
+  migratedTenantIds: string[];
+  failedTenantIds: string[];
+  healthChecks: RolloutHealthCheck[];
+}
+
+export interface PolicyTemplateRollout {
+  id: string;
+  templateId: string;
+  fromVersion: number | null;
+  toVersion: number;
+  strategy: RolloutStrategy;
+  status: RolloutOverallStatus;
+  startedBy: string;
+  startedAt: string;
+  completedAt?: string;
+  abortedAt?: string;
+  abortReason?: string;
+  note: string;
+  phases: RolloutPhasePlan[];
+  currentPhase: RolloutPhase | null;
+  validation: RolloutHealthCheck[];
+  totalAffectedTenants: number;
+}
+
+export type PolicyTemplateAuditAction =
+  | "template.create"
+  | "template.version.publish"
+  | "template.tenant.apply"
+  | "template.tenant.remove"
+  | "template.override.add"
+  | "template.override.remove"
+  | "template.rollout.start"
+  | "template.rollout.promote"
+  | "template.rollout.complete"
+  | "template.rollout.abort"
+  | "template.rollback"
+  | "template.archive";
+
+export interface PolicyTemplateAuditEntry {
+  id: string;
+  templateId: string;
+  occurredAt: string;
+  actor: string;
+  actorRole: string;
+  action: PolicyTemplateAuditAction;
+  targetVersion?: number;
+  description: string;
+  outcome: "success" | "failure";
+}
+
+export type TemplateIndustry =
+  | "Healthcare"
+  | "Legal"
+  | "Financial"
+  | "Education"
+  | "Manufacturing"
+  | "Retail"
+  | "Government"
+  | "General";
+
+export interface PolicyTemplate {
+  id: string;
+  name: string;
+  description: string;
+  industry: TemplateIndustry;
+  status: PolicyTemplateStatus;
+  tags: string[];
+  workloadCoverage: WorkloadCoverageType[];
+  complianceFrameworks: ComplianceFramework[];
+  currentVersion: number;
+  versions: PolicyTemplateVersion[];
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}

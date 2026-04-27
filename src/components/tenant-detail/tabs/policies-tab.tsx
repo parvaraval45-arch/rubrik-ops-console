@@ -53,6 +53,15 @@ export function PoliciesTab({ tenant, assignment }: PoliciesTabProps) {
 
   const addOverride = useConsoleStore((s) => s.addPolicyOverride);
   const resetOverrides = useConsoleStore((s) => s.resetPolicyOverrides);
+  const templateAssignments = useConsoleStore(
+    (s) => s.policyTemplateAssignments,
+  );
+  const templateAssignment = templateAssignments.find(
+    (a) => a.tenantId === tenant.id,
+  );
+  const templateLink = templateAssignment
+    ? `/policies?policyId=${templateAssignment.templateId}&tab=configuration`
+    : "/policies";
 
   const inSync = assignment.overrides.length === 0;
 
@@ -86,7 +95,7 @@ export function PoliciesTab({ tenant, assignment }: PoliciesTabProps) {
             </div>
           </div>
           <Button asChild variant="outline" className="border-border-default">
-            <Link href={`/policies?policyId=${assignment.policyId}`}>View Template</Link>
+            <Link href={templateLink}>View Template</Link>
           </Button>
         </div>
 

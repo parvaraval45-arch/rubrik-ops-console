@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -255,9 +256,12 @@ export function IsolationMatrix({
               className="sticky left-0 z-[1] flex items-center justify-between gap-2 bg-surface px-3 py-2.5"
             >
               <div className="min-w-0">
-                <div className="truncate text-[13px] font-medium text-text-primary">
+                <Link
+                  href={`/tenants/${row.tenant.id}?tab=security`}
+                  className="block truncate text-[13px] font-medium text-text-primary underline-offset-2 hover:text-brand-primary-hover hover:underline"
+                >
                   {row.tenant.name}
-                </div>
+                </Link>
                 <div className="mt-0.5 flex items-center gap-1.5">
                   <Badge
                     variant="outline"

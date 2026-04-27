@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { ArrowUpRight, ShieldCheck, ShieldX, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatPercent } from "@/lib/formatters";
@@ -29,11 +30,23 @@ export function SummaryTiles({
   postureScore,
   onTileClick,
 }: SummaryTilesProps) {
-  const monthJobs = jobs.slice(0, 435);
+  const [now] = useState(() => Date.now());
+  // 30-day window — strictly bounded by start time, not array slice.
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+  const monthJobs = jobs.filter((j) => {
+    const t = Date.parse(j.startedAt);
+    return Number.isFinite(t) && now - t <= THIRTY_DAYS_MS;
+  });
   const succeeded = monthJobs.filter((j) => j.status === "succeeded").length;
   const failed = monthJobs.filter((j) => j.status === "failed").length;
+  const running = monthJobs.filter(
+    (j) => j.status === "running" || j.status === "queued",
+  ).length;
+  // Success rate excludes still-running jobs from the denominator so the math
+  // is internally consistent with "succeeded vs failed" counts.
+  const settled = succeeded + failed;
   const successRate =
-    monthJobs.length > 0 ? (succeeded / monthJobs.length) * 100 : 100;
+    settled === 0 ? 100 : (succeeded / settled) * 100;
   const lastFailure = monthJobs.find((j) => j.status === "failed");
   const lastFailureLabel = lastFailure
     ? relativeHoursAgo(lastFailure.startedAt)
@@ -91,7 +104,12 @@ export function SummaryTiles({
       >
         <div className="mt-2 flex flex-col gap-0.5 text-[12px] text-text-secondary">
           <span className="tabular-nums">
-            {succeeded} of {monthJobs.length} jobs succeeded · {failed} failed
+            {succeeded} succeeded · {failed} failed
+            {running > 0 ? ` · ${running} in flight` : ""}
+            {" "}
+            <span className="text-text-tertiary">
+              ({monthJobs.length} total)
+            </span>
           </span>
           <span className="text-text-tertiary">Last failure: {lastFailureLabel}</span>
         </div>

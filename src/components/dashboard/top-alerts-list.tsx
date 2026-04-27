@@ -20,6 +20,24 @@ const SEVERITY_DOT: Record<Alert["severity"], string> = {
   info: "bg-status-info",
 };
 
+function alertTabFor(category: Alert["category"]): string {
+  switch (category) {
+    case "Backup Failure":
+      return "jobs";
+    case "Capacity":
+      return "capacity";
+    case "Threat":
+      return "security";
+    case "Compliance":
+      return "policies";
+    case "Policy Drift":
+      return "policies";
+    case "Configuration":
+    default:
+      return "alarms";
+  }
+}
+
 export function TopAlertsList({ rows }: { rows: DashboardAlertRow[] }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const active = rows.find((r) => r.alert.id === activeId) ?? null;
@@ -65,9 +83,19 @@ export function TopAlertsList({ rows }: { rows: DashboardAlertRow[] }) {
                       {row.title}
                     </span>
                     <span className="text-[11px] text-text-tertiary">·</span>
-                    <span className="truncate text-[13px] text-text-secondary">
-                      {row.tenant?.name ?? "Unknown tenant"}
-                    </span>
+                    {row.tenant ? (
+                      <Link
+                        href={`/tenants/${row.tenant.id}?tab=${alertTabFor(row.alert.category)}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="truncate text-[13px] text-text-secondary underline-offset-2 hover:text-text-primary hover:underline"
+                      >
+                        {row.tenant.name}
+                      </Link>
+                    ) : (
+                      <span className="truncate text-[13px] text-text-secondary">
+                        Unknown tenant
+                      </span>
+                    )}
                   </div>
                   <span className="truncate text-[12px] text-text-tertiary">
                     {row.alert.description}

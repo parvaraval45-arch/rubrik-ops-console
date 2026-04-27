@@ -51,11 +51,53 @@ const INDUSTRY_COMPLIANCE: Record<string, string[]> = {
   Retail: ["PCI-DSS", "GDPR"],
 };
 
-const TIER_DETAILS: Record<Tier, { rpo: string; rto: string; retention: string; immutable: string; sla: string; accent: string }> = {
-  Platinum: { rpo: "1h", rto: "4h", retention: "365d", immutable: "Yes", sla: "99.99%", accent: "border-purple-500/30 bg-purple-50" },
-  Gold: { rpo: "4h", rto: "8h", retention: "90d", immutable: "Yes", sla: "99.9%", accent: "border-amber-500/30 bg-amber-50" },
-  Silver: { rpo: "8h", rto: "24h", retention: "30d", immutable: "No", sla: "99.5%", accent: "border-slate-300 bg-slate-50" },
-  Bronze: { rpo: "24h", rto: "48h", retention: "14d", immutable: "No", sla: "99%", accent: "border-orange-500/30 bg-orange-50" },
+interface TierMeta {
+  rpo: string;
+  rto: string;
+  retention: string;
+  immutable: string;
+  sla: string;
+  swatch: string;
+  blurb: string;
+}
+
+const TIER_DETAILS: Record<Tier, TierMeta> = {
+  Platinum: {
+    rpo: "1h",
+    rto: "4h",
+    retention: "365d",
+    immutable: "Yes",
+    sla: "99.99%",
+    swatch: "bg-violet-500",
+    blurb: "Mission-critical workloads",
+  },
+  Gold: {
+    rpo: "4h",
+    rto: "8h",
+    retention: "90d",
+    immutable: "Yes",
+    sla: "99.9%",
+    swatch: "bg-amber-500",
+    blurb: "Regulated, business-critical",
+  },
+  Silver: {
+    rpo: "8h",
+    rto: "24h",
+    retention: "30d",
+    immutable: "No",
+    sla: "99.5%",
+    swatch: "bg-slate-400",
+    blurb: "Standard production",
+  },
+  Bronze: {
+    rpo: "24h",
+    rto: "48h",
+    retention: "14d",
+    immutable: "No",
+    sla: "99%",
+    swatch: "bg-orange-500",
+    blurb: "Dev / non-production",
+  },
 };
 
 export function Step1Profile({ existingTenantNames }: { existingTenantNames: string[] }) {
@@ -276,40 +318,51 @@ export function Step1Profile({ existingTenantNames }: { existingTenantNames: str
             control={form.control}
             name="tier"
             render={({ field }) => (
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
                 {TIERS.map((t) => {
                   const def = TIER_DETAILS[t];
                   const selected = field.value === t;
+                  const isRecommended = recommendedTier === t;
                   return (
                     <button
                       key={t}
                       type="button"
                       onClick={() => field.onChange(t)}
+                      aria-pressed={selected}
                       className={cn(
-                        "rounded-lg border p-4 text-left transition-all",
+                        "group relative flex flex-col rounded-lg border p-4 text-left transition-all",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2",
                         selected
-                          ? "border-brand-primary bg-brand-primary-subtle"
-                          : "border-border-subtle bg-surface hover:border-brand-primary/40",
+                          ? "border-brand-primary bg-brand-primary-subtle/50 shadow-sm ring-1 ring-brand-primary"
+                          : "border-border-subtle bg-surface hover:border-brand-primary/40 hover:bg-secondary/30",
                       )}
                     >
-                      <div className="flex items-center justify-between">
+                      {isRecommended ? (
+                        <span className="absolute -top-2 right-3 inline-flex items-center gap-0.5 rounded-full bg-brand-primary px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-white shadow-sm">
+                          <Sparkles className="h-2.5 w-2.5" />
+                          Recommended
+                        </span>
+                      ) : null}
+
+                      <div className="flex items-center gap-2">
+                        <span className={cn("h-2 w-2 shrink-0 rounded-full", def.swatch)} aria-hidden />
                         <span className="text-[14px] font-semibold text-text-primary">
                           {t}
                         </span>
-                        {recommendedTier === t ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-brand-primary px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
-                            <Sparkles className="h-2.5 w-2.5" />
-                            Recommended
-                          </span>
-                        ) : null}
                       </div>
-                      <ul className="mt-3 space-y-1 text-[12px] text-text-secondary">
-                        <Detail label="RPO" value={def.rpo} />
-                        <Detail label="RTO" value={def.rto} />
-                        <Detail label="Retention" value={def.retention} />
-                        <Detail label="Immutable" value={def.immutable} />
-                        <Detail label="SLA" value={def.sla} />
-                      </ul>
+                      <p className="mt-1 line-clamp-1 text-[11.5px] text-text-tertiary">
+                        {def.blurb}
+                      </p>
+
+                      <div className="my-3 h-px bg-border-subtle" aria-hidden />
+
+                      <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11.5px]">
+                        <DetailRow label="RPO" value={def.rpo} />
+                        <DetailRow label="RTO" value={def.rto} />
+                        <DetailRow label="Retention" value={def.retention} />
+                        <DetailRow label="Immutable" value={def.immutable} />
+                        <DetailRow label="SLA" value={def.sla} fullWidth />
+                      </dl>
                     </button>
                   );
                 })}
@@ -416,27 +469,38 @@ function RadioCard({
   return (
     <label
       className={cn(
-        "flex items-start gap-3 rounded-md border p-3 transition-all",
+        "flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-all",
+        "hover:bg-secondary/30",
         selected
-          ? "border-brand-primary bg-brand-primary-subtle"
+          ? "border-brand-primary bg-brand-primary-subtle/50 ring-1 ring-brand-primary"
           : "border-border-subtle bg-surface hover:border-brand-primary/40",
       )}
     >
       <RadioGroupItem value={value} className="mt-0.5" />
-      <div>
+      <div className="min-w-0">
         <div className="text-[13px] font-medium text-text-primary">{label}</div>
-        <div className="text-[11.5px] text-text-secondary">{description}</div>
+        <div className="mt-0.5 text-[11.5px] leading-relaxed text-text-secondary">
+          {description}
+        </div>
       </div>
     </label>
   );
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
+function DetailRow({
+  label,
+  value,
+  fullWidth,
+}: {
+  label: string;
+  value: string;
+  fullWidth?: boolean;
+}) {
   return (
-    <li className="flex items-center justify-between">
-      <span className="text-text-tertiary">{label}</span>
-      <span className="font-medium text-text-primary tabular-nums">{value}</span>
-    </li>
+    <div className={cn("flex items-baseline justify-between gap-2", fullWidth && "col-span-2")}>
+      <dt className="text-text-tertiary">{label}</dt>
+      <dd className="font-medium text-text-primary tabular-nums">{value}</dd>
+    </div>
   );
 }
 

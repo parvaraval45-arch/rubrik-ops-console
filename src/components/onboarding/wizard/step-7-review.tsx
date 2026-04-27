@@ -158,7 +158,7 @@ export function Step7Review({
             <ol className="mt-4 flex flex-col gap-2">
               {preflight.map((c, i) => (
                 <li
-                  key={c.id}
+                  key={`${c.id}-${i}`}
                   className={cn(
                     "flex items-start gap-3 rounded-md border p-2.5 text-[12.5px]",
                     c.status === "fail"
